@@ -23,6 +23,8 @@ import { fileURLToPath, pathToFileURL } from "url";
 import path from "path";
 import { smsg } from "./source/myfunc.js";
 import express from "express";
+import { useMongoDBAuthState } from 'mongo-baileys';
+import { MongoClient } from 'mongodb';
 const ff = ffmpeg;
 
 global.mode = true;
@@ -33,6 +35,8 @@ global.sessionName = "session";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+app.use(express.static("public"));
+
 
 const asciiArt = () => {
   console.log(chalk.redBright(`
@@ -103,6 +107,18 @@ async function relogfile() {
   }
 }
 
+const url = "mongodb+srv://Vercel-Admin-baileys:xYpx7XfqxcrvqC0U@baileys.x6jrr0w.mongodb.net/?retryWrites=true&w=majority"; // Replace with your MongoDB connection string // When Obtaining Mongodb URL Choose NodeJS Driver Version 2 or Later but don't 3 or it higher
+const dbName = "whatsapp";
+const collectionName = "authState";
+
+async function connectToMongoDB() {
+    const client = new MongoClient(url);
+    await client.connect();
+    const db = client.db(dbName);
+    const collection = db.collection(collectionName);
+    return { client, collection };
+}
+
 async function startServer() {
   const child = async () => {
     process.on("unhandledRejection", (err) => console.error(err));
@@ -111,9 +127,9 @@ async function startServer() {
     await relogfile();
     fs.watchFile(caserelog, relogfile);
 
-    const sessionPath = `./${sessionName}`;
+    const { collection } = await connectToMongoDB();
 
-    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+    const { state, saveCreds } = await useMongoDBAuthState(collection);
     const conn = makeWASocket({
       printQRInTerminal: false,
       logger: pino({ level: "silent" }),
