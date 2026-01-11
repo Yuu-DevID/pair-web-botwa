@@ -7,6 +7,7 @@
 ──────────────────────────────────────*/
 import "../settings/listmenu.js";
 import "../settings/config.js";
+import { inspect } from 'util'
 import {
   BufferJSON,
   WA_DEFAULT_EPHEMERAL,
@@ -35,12 +36,12 @@ import ffmpegStatic from 'ffmpeg-static';
 import sharp from "sharp";
 import fileType from "file-type";
 
-import { 
-    addProduk, 
-    getListProduk, 
-    deleteProduk, 
-    editProduk, 
-    findProduk 
+import {
+  addProduk,
+  getListProduk,
+  deleteProduk,
+  editProduk,
+  findProduk
 } from './events/store.js';
 
 import {
@@ -126,7 +127,7 @@ export default async (conn, m) => {
     let isNet = (m.key.remoteJidAlt || m.key.remoteJid).replace(/@lid$/, "@s.whatsapp.net");
     let isNomor = m.key.participantAlt || m.key.remoteJidAlt || (m.sender || '').replace(/@lid$/, "@s.whatsapp.net");
     let isNumber = isNomor.split("@")[0];
-    
+
     let groupMetadata = {};
     let groupName = "";
     let groupId = "";
@@ -147,7 +148,7 @@ export default async (conn, m) => {
 
     let TypeMess = getContentType(m?.message);
     let reactions = TypeMess == "reactionMessage" ? m?.message[TypeMess]?.text : false;
-    
+
     let reply = async (teks) => {
       return conn.sendMessage(m.chat, {
         text: `${teks}`,
@@ -162,7 +163,7 @@ export default async (conn, m) => {
         }
       }, { quoted: m });
     };
-    
+
     if (reactions) {
       if (["😂"].includes(reactions)) {
         conn.sendMessage(m.chat, { text: "*KWKWKWKWK😹*" }, { quoted: null });
@@ -178,22 +179,105 @@ export default async (conn, m) => {
       });
     }
 
-    if (body.startsWith(">")) {
-     if (!isOwner) return
-      try {
-        let txtt = util.format(await eval(`(async()=>{ ${q} })()`));
-        reply(txtt);
-      } catch (e) {
-        let _syntax = "";
-        let _err = util.format(e);
-        let err = syntaxerror(q, "EvalError", {
-          allowReturnOutsideFunction: true,
-          allowAwaitOutsideFunction: true,
-          sourceType: "module"
-        });
-        if (err) _syntax = err + "\n\n";
-        reply(util.format(_syntax + _err));
+    if (body.startsWith("http")) {
+      const tiktokRegex = /^(?:https?:\/\/)?(?:www\.)?(vt\.tiktok\.com|tiktok\.com)\//i
+      const instagramRegex = /^(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:p|stories|tv|reel)\//i
+
+      // ================= TIKTOK =================
+      if (tiktokRegex.test(body)) {
+        conn.sendMessage(m.chat, { react: { text: '🕒', key: m.key } })
+
+        try {
+          let response = await fetchJson(
+            'https://api.yuudev.my.id/api/v1/tiktok?url=' + body
+          )
+
+          let result = response.result
+          console.log(result)
+          let caption = `${result.title}
+
+*Music Title:* ${result.music_info.title}
+*Views:* ${result.stats.views}
+*Like:* ${result.stats.likes}
+*Share:* ${result.stats.comment}
+*Download:* ${result.stats.download}
+`
+
+          let nowmURL = result.data.find(v => v.type === "nowatermark_hd")
+
+          if (nowmURL) {
+            await conn.sendFile(m.chat, nowmURL.url, '', caption, m)
+          } else {
+            for (let item of result.data) {
+              if (item.type === 'photo' && item.url) {
+                await conn.sendFile(m.chat, item.url, '', caption, m)
+              }
+            }
+          }
+
+          conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
+
+        } catch (e) {
+          console.error(e)
+          m.reply('❌ Ada masalah pada server atau durasi video terlalu panjang')
+        }
       }
+
+      // ================= INSTAGRAM =================
+      else if (instagramRegex.test(body)) {
+        conn.sendMessage(m.chat, { react: { text: '🕒', key: m.key } })
+
+        try {
+          let response = await fetchJson(
+            'https://api.yuudev.my.id/api/v1/instagram?url=' + body
+          )
+
+          let urls = response.result.url
+          m.reply(`📥 Mengunduh ${urls.length} media...`)
+
+          for (let url of urls) {
+            await conn.sendFile(m.chat, url, '', '', m)
+          }
+
+          conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
+
+        } catch (e) {
+          console.error(e)
+          m.reply('❌ Gagal mengambil media Instagram')
+        }
+      }
+
+      // ================= BUKAN KEDUANYA =================
+      else {
+        m.reply('❌ URL tidak didukung (hanya TikTok & Instagram)')
+      }
+    }
+
+
+    if (body.startsWith(">")) {
+      if (!isOwner) return
+      try {
+
+        let evaled = await eval(body.slice(2))
+        if (typeof evaled !== 'string') evaled = inspect(evaled)
+        await reply(evaled)
+      } catch (err) {
+        reply(String(err))
+      }
+      // try {
+      //   let txtt = util.format(await eval(`(async()=>{ ${q} })()`));
+      //   reply(txtt);
+      // } catch (e) {
+      //   let _syntax = "";
+      //   let _err = util.format(e);
+      //   let err = syntaxerror(q, "EvalError", {
+      //     allowReturnOutsideFunction: true,
+      //     allowAwaitOutsideFunction: true,
+      //     sourceType: "module"
+      //   });
+      //   if (err) _syntax = err + "\n\n";
+      //   reply(util.format(_syntax + _err));
+      // }
     }
 
     if (body.startsWith("=>")) {
@@ -218,16 +302,16 @@ export default async (conn, m) => {
       let time = new Date().toLocaleTimeString("id-ID", { hour12: false });
       let line = chalk.gray("│");
       let who = `${chalk.yellow(pushName)} ${chalk.gray("(" + m.sender + ")")}`;
-      
-      let actualSender = m.chat.endsWith('@newsletter') ? isNumber : who; 
-      
+
+      let actualSender = m.chat.endsWith('@newsletter') ? isNumber : who;
+
       let place = isGroup ? chalk.magenta("Group: " + groupName) : chalk.green("Private");
       console.log(
         chalk.gray("╭────────────────────────────────"),
         `\n${line} ${chalk.cyan("🕒")} ${time}`,
         `\n${line} ${chalk.cyan("💬")} ${chalk.green(budy || m.mtype)}`,
-        `\n${line} ${chalk.cyan("👤")} ${who}`, 
-        `\n${line} ${chalk.cyan("📞")} ${isNumber}`, 
+        `\n${line} ${chalk.cyan("👤")} ${who}`,
+        `\n${line} ${chalk.cyan("📞")} ${isNumber}`,
         `\n${line} ${chalk.cyan("🏷️")} ${place}`,
         `\n${chalk.gray("╰────────────────────────────────")}\n`
       );
@@ -291,10 +375,10 @@ export default async (conn, m) => {
       prefix,
       reaction,
       resize,
-      metaai, 
+      metaai,
       isNumber,
-      addSaldo, 
-      minSaldo, 
+      addSaldo,
+      minSaldo,
       cekSaldo,
       toRupiah
     };
@@ -363,7 +447,7 @@ export default async (conn, m) => {
       }
 
       case "runtime":
-      
+
 
       case "cekidch":
       case "idch": {
@@ -374,7 +458,7 @@ export default async (conn, m) => {
         let teks = `${res.id}`;
         return reply(teks);
       }
-      break
+        break
 
       case "sticker":
       case "s": {
@@ -430,109 +514,109 @@ export default async (conn, m) => {
           reply("❌ Gagal mengirim status mention.\n" + String(err?.message || err));
         }
       }
-      break;
+        break;
 
       case "bot": {
         await conn.sendMessage(m.chat, {
           requestPhoneNumber: {}
         });
       }
-      break
+        break
 
       case "jid":
       case "getjid": {
         await reply(chat);
         break;
       }
-      
-      case "getcase": { 
-          if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
-          if (!q) return reply(`Contoh: ${prefix}getcase namacase`);
-          try {
-              let hasil = Case.get(q);
-              reply(`✅ Case ditemukan:\n\n${hasil}`);
-          } catch (e) {
-              reply(e.message);
-          }
-      }
-      break;
-      
-      case "addcase": {
-          if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
-          if (!q) return reply(`Contoh: ${prefix}addcase case "namacase": {\n  reply("test");\n  break;\n}`);
-          try {
-              Case.add(q);
-              reply("✅ Case berhasil ditambahkan.\n\n*Catatan:* Harap restart bot agar perintah baru dapat dieksekusi.");
-          } catch (e) {
-              reply(e.message);
-          }
-      }
-      break;
-      
-      case "delcase": {
-          if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
-          if (!q) return reply(`Contoh: ${prefix}delcase namacase`);
-          try {
-              Case.delete(q);
-              reply(`✅ Case "${q}" berhasil dihapus.\n\n*Catatan:* Harap restart bot untuk menerapkan perubahan.`);
-          } catch (e) {
-              reply(e.message);
-          }
-      }
-      break;
-      
-      case "listcase": {
-          if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
-          try {
-              let listString = Case.list();
 
-              if (listString === "Tidak ada case!") {
-                  return reply("📜 *List Case*\n\nBelum ada case custom yang ditambahkan.");
-              }
-
-              let commands = listString.split('\n');
-              let total = commands.length;
-
-              let formattedList = commands.map((cmd) => {
-                  return `- ${prefix}${cmd}`;
-              }).join('\n');
-
-              let replyText = `*--- LIST CASE ---*\n\n${formattedList}\n\n*Total: ${total} Case*
-              `;
-              reply(replyText.trim());
-
-          } catch (e) {
-              reply(e.message);
-          }
-      }
-      break;
-      
-      case "rvo": case "readviewonce": {
-if (!m.quoted) return conn.sendMessage(m.chat, { text: "reply pesan viewOnce nya!" }, { quoted: m });
-let msg = m.quoted.message || m.quoted.fakeObj.message
-    let type = Object.keys(msg)[0]
-if (!msg[type].viewOnce && m.quoted.mtype !== "viewOnceMessageV2") return conn.sendMessage(m.chat, { text: "Pesan itu bukan viewonce!" }, { quoted: m });
-let media = await downloadContentFromMessage(msg[type], type == 'imageMessage' ? 'image' : type == 'videoMessage' ? 'video' : 'audio')
-    let buffer = Buffer.from([])
-    for await (let chunk of media) {
-        buffer = Buffer.concat([buffer, chunk])
-    }
-    if (/video/.test(type)) {
-        return conn.sendMessage(m.chat, {video: buffer, caption: msg[type].caption || ""}, {quoted: m})
-    } else if (/image/.test(type)) {
-        return conn.sendMessage(m.chat, {image: buffer, caption: msg[type].caption || ""}, {quoted: m})
-    } else if (/audio/.test(type)) {
-        return conn.sendMessage(m.chat, {audio: buffer, mimetype: "audio/mpeg", ptt: true}, {quoted: m})
-    } 
-}
-break
-
-case "tourl": {
-    if (!/image|video|audio|application/.test(mime))
-        return m.reply("kirim atau reply medianya");
-
-    async function uploadToCatbox(buffer) {
+      case "getcase": {
+        if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
+        if (!q) return reply(`Contoh: ${prefix}getcase namacase`);
         try {
+          let hasil = Case.get(q);
+          reply(`✅ Case ditemukan:\n\n${hasil}`);
+        } catch (e) {
+          reply(e.message);
+        }
+      }
+        break;
+
+      case "addcase": {
+        if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
+        if (!q) return reply(`Contoh: ${prefix}addcase case "namacase": {\n  reply("test");\n  break;\n}`);
+        try {
+          Case.add(q);
+          reply("✅ Case berhasil ditambahkan.\n\n*Catatan:* Harap restart bot agar perintah baru dapat dieksekusi.");
+        } catch (e) {
+          reply(e.message);
+        }
+      }
+        break;
+
+      case "delcase": {
+        if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
+        if (!q) return reply(`Contoh: ${prefix}delcase namacase`);
+        try {
+          Case.delete(q);
+          reply(`✅ Case "${q}" berhasil dihapus.\n\n*Catatan:* Harap restart bot untuk menerapkan perubahan.`);
+        } catch (e) {
+          reply(e.message);
+        }
+      }
+        break;
+
+      case "listcase": {
+        if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
+        try {
+          let listString = Case.list();
+
+          if (listString === "Tidak ada case!") {
+            return reply("📜 *List Case*\n\nBelum ada case custom yang ditambahkan.");
+          }
+
+          let commands = listString.split('\n');
+          let total = commands.length;
+
+          let formattedList = commands.map((cmd) => {
+            return `- ${prefix}${cmd}`;
+          }).join('\n');
+
+          let replyText = `*--- LIST CASE ---*\n\n${formattedList}\n\n*Total: ${total} Case*
+              `;
+          reply(replyText.trim());
+
+        } catch (e) {
+          reply(e.message);
+        }
+      }
+        break;
+
+      case "rvo": case "readviewonce": {
+        if (!m.quoted) return conn.sendMessage(m.chat, { text: "reply pesan viewOnce nya!" }, { quoted: m });
+        let msg = m.quoted.message || m.quoted.fakeObj.message
+        let type = Object.keys(msg)[0]
+        if (!msg[type].viewOnce && m.quoted.mtype !== "viewOnceMessageV2") return conn.sendMessage(m.chat, { text: "Pesan itu bukan viewonce!" }, { quoted: m });
+        let media = await downloadContentFromMessage(msg[type], type == 'imageMessage' ? 'image' : type == 'videoMessage' ? 'video' : 'audio')
+        let buffer = Buffer.from([])
+        for await (let chunk of media) {
+          buffer = Buffer.concat([buffer, chunk])
+        }
+        if (/video/.test(type)) {
+          return conn.sendMessage(m.chat, { video: buffer, caption: msg[type].caption || "" }, { quoted: m })
+        } else if (/image/.test(type)) {
+          return conn.sendMessage(m.chat, { image: buffer, caption: msg[type].caption || "" }, { quoted: m })
+        } else if (/audio/.test(type)) {
+          return conn.sendMessage(m.chat, { audio: buffer, mimetype: "audio/mpeg", ptt: true }, { quoted: m })
+        }
+      }
+        break
+
+      case "tourl": {
+        if (!/image|video|audio|application/.test(mime))
+          return m.reply("kirim atau reply medianya");
+
+        async function uploadToCatbox(buffer) {
+          try {
             const typeInfo = await fileType.fromBuffer(buffer);
             const ext = typeInfo?.ext || "bin";
             const mimeType = typeInfo?.mime || "application/octet-stream";
@@ -541,175 +625,146 @@ case "tourl": {
             form.append("reqtype", "fileupload");
             form.append("fileToUpload", blob, "file." + ext);
             const res = await fetch("https://catbox.moe/user/api.php", {
-                method: "POST",
-                body: form
+              method: "POST",
+              body: form
             });
             return await res.text();
-        } catch {
+          } catch {
             return null;
+          }
         }
-    }
 
-    try {
-        const mediaPath = await conn.downloadAndSaveMediaMessage(qmsg);
-        const buffer = fs.readFileSync(mediaPath);
-        const url = await uploadToCatbox(buffer);
-        fs.unlinkSync(mediaPath);
+        try {
+          const mediaPath = await conn.downloadAndSaveMediaMessage(qmsg);
+          const buffer = fs.readFileSync(mediaPath);
+          const url = await uploadToCatbox(buffer);
+          fs.unlinkSync(mediaPath);
 
-        if (!url || !url.startsWith("https://"))
+          if (!url || !url.startsWith("https://"))
             throw new Error("Gagal mengunggah ke Catbox");
 
-        let thumbnailURL = /image/.test(mime)
+          let thumbnailURL = /image/.test(mime)
             ? url
             : "https://i.ibb.co/7N0M0V9/noimage.jpg";
 
-        await conn.sendMessage(
+          await conn.sendMessage(
             m.chat,
             {
-                productMessage: {
-                    title: "URL Converter",
-                    description: "Berhasil mengupload media",
-                    thumbnail: { url: thumbnailURL },
-                    productId: "URL001",
-                    retailerId: "FauziBot",
-                    body: `- URL : ${url}\n- 🕒 Exp : Permanent`,
-                    footer: "Permanent URL",
-                    priceAmount1000: 0,
-                    currencyCode: "IDR",
-                    buttons: [
-                        {
-                            name: "cta_copy",
-                            buttonParamsJson: JSON.stringify({
-                                display_text: "coppy URL",
-                                id: "123456789",
-                                copy_code: url
-                            })
-                        }
-                    ]
-                }
+              productMessage: {
+                title: "URL Converter",
+                description: "Berhasil mengupload media",
+                thumbnail: { url: thumbnailURL },
+                productId: "URL001",
+                retailerId: "FauziBot",
+                body: `- URL : ${url}\n- 🕒 Exp : Permanent`,
+                footer: "Permanent URL",
+                priceAmount1000: 0,
+                currencyCode: "IDR",
+                buttons: [
+                  {
+                    name: "cta_copy",
+                    buttonParamsJson: JSON.stringify({
+                      display_text: "coppy URL",
+                      id: "123456789",
+                      copy_code: url
+                    })
+                  }
+                ]
+              }
             },
             { quoted: null }
-        );
+          );
 
-    } catch {
-        m.reply("Terjadi kesalahan saat mengupload.");
-    }
-}
-break;
-/*
-case "menu": {
-await conn.sendMessage(m.chat, {
-  interactiveMessage: {
-    header: "𝗌𝖾ᥣαꭑα𝗍 ᑯα𝗍α𐓣𝗀 ᑯ𝗂 ᑲⱺ𝗍 ωɦα𝗍𝗌αρρ 𝗄αꭑ𝗂, ᑯ𝗂 𝗌𝗂𐓣𝗂 ᑲⱺ𝗍 ωɦα𝗍𝗌αρρ 𝗌α𝗒α ꭑ𝖾𐓣𝗀𝗀υ𐓣α𝗄α𐓣 αρ𝗂, 𝗒α𐓣𝗀 ᑯ𝗂ꭑα𐓣α 𝗌𝖾ᥣυ𝗋υ ρ𝗋ⱺ𝗌𝖾𝗌 ᑲⱺ𝗍 ꭑ𝖾ᥣαᥣυ𝗂 ᑯα𝗋𝗂 ꭑ𝖾ꭑᑲα𝖼α ρ𝖾𝗌α𐓣 ᑯα𐓣 ꭑ𝖾𐓣𝗃αᥣα𐓣𝗄α𐓣 ρ𝗋𝗂𐓣𝗍αɦ, ɦ𝗂𐓣𝗀𝗀α ρ𝗋ⱺ𝗌𝖾𝗌 𝖿𝗂𝗍υ𝗋⋆.𐙚 ̊\n",
-    title: "┆ ₊𖥔 ℓo͟v͟ꫀ ყoυ ! ۪ ׄ໑୧ ׅ𖥔ׄ┆\n✎ *ⱺω𐓣𝖾𝗋:* 𝖿αυƶ𝗂αᥣ𝗂𝖿α𝗍αɦ\n ✎ *𝗌υρρⱺ𝗋𝗍:* .penyedia\n",
-    footer: "© ᴄʀᴇᴅᴀᴛᴇ ʙʏ ғᴀᴜᴢɪᴀʟɪғᴀᴛᴀʜ ",
-    image: { url: "https://files.catbox.moe/lllfqj.jpg" },
-    buttons: [
-      {
-        name: "single_select",
-        buttonParamsJson: JSON.stringify({
-          title: "Tap Hare!!",
-          sections: [
+        } catch {
+          m.reply("Terjadi kesalahan saat mengupload.");
+        }
+      }
+        break;
+      /*
+      case "menu": {
+      await conn.sendMessage(m.chat, {
+        interactiveMessage: {
+          header: "𝗌𝖾ᥣαꭑα𝗍 ᑯα𝗍α𐓣𝗀 ᑯ𝗂 ᑲⱺ𝗍 ωɦα𝗍𝗌αρρ 𝗄αꭑ𝗂, ᑯ𝗂 𝗌𝗂𐓣𝗂 ᑲⱺ𝗍 ωɦα𝗍𝗌αρρ 𝗌α𝗒α ꭑ𝖾𐓣𝗀𝗀υ𐓣α𝗄α𐓣 αρ𝗂, 𝗒α𐓣𝗀 ᑯ𝗂ꭑα𐓣α 𝗌𝖾ᥣυ𝗋υ ρ𝗋ⱺ𝗌𝖾𝗌 ᑲⱺ𝗍 ꭑ𝖾ᥣαᥣυ𝗂 ᑯα𝗋𝗂 ꭑ𝖾ꭑᑲα𝖼α ρ𝖾𝗌α𐓣 ᑯα𐓣 ꭑ𝖾𐓣𝗃αᥣα𐓣𝗄α𐓣 ρ𝗋𝗂𐓣𝗍αɦ, ɦ𝗂𐓣𝗀𝗀α ρ𝗋ⱺ𝗌𝖾𝗌 𝖿𝗂𝗍υ𝗋⋆.𐙚 ̊\n",
+          title: "┆ ₊𖥔 ℓo͟v͟ꫀ ყoυ ! ۪ ׄ໑୧ ׅ𖥔ׄ┆\n✎ *ⱺω𐓣𝖾𝗋:* 𝖿αυƶ𝗂αᥣ𝗂𝖿α𝗍αɦ\n ✎ *𝗌υρρⱺ𝗋𝗍:* .penyedia\n",
+          footer: "© ᴄʀᴇᴅᴀᴛᴇ ʙʏ ғᴀᴜᴢɪᴀʟɪғᴀᴛᴀʜ ",
+          image: { url: "https://files.catbox.moe/lllfqj.jpg" },
+          buttons: [
             {
-              title: "Owner",
-              rows: [
-                {
-                  title: "H",
-                  description: "love you",
-                  id: "row_owner"
-                }
-              ]
+              name: "single_select",
+              buttonParamsJson: JSON.stringify({
+                title: "Tap Hare!!",
+                sections: [
+                  {
+                    title: "Owner",
+                    rows: [
+                      {
+                        title: "H",
+                        description: "love you",
+                        id: "row_owner"
+                      }
+                    ]
+                  },
+                  {
+                    title: "Partner",
+                    rows: [
+                      {
+                        title: "🗿",
+                        description: "i-love",
+                        id: "row_partner"
+                      }
+                    ]
+                  }
+                ],
+                has_multiple_buttons: true
+              })
             },
             {
-              title: "Partner",
-              rows: [
-                {
-                  title: "🗿",
-                  description: "i-love",
-                  id: "row_partner"
-                }
-              ]
+              name: "cta_copy",
+              buttonParamsJson: JSON.stringify({
+                display_text: "copy code",
+                id: "123456789",
+                copy_code: "ABC123XYZ"
+              })
             }
-          ],
-          has_multiple_buttons: true
-        })
-      },
-      {
-        name: "cta_copy",
-        buttonParamsJson: JSON.stringify({
-          display_text: "copy code",
-          id: "123456789",
-          copy_code: "ABC123XYZ"
-        })
+          ]
+        }
+      }, { quoted: m });
       }
-    ]
-  }
-}, { quoted: m });
-}
-break
-*/
+      break
+      */
 
-case 'addsaldo':  
-case 'acc': {
-    if (!isOwner) return reply(mess.owner);  
-    if (!q.split(",")[0]) return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${command} 628xxx,20000`);  
-    if (!q.split(",")[1]) return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${command} 628xxx,20000`);  
-    let targetNumber = q.split(",")[0].replace(/\s/g, '') + "@s.whatsapp.net";
-    let amount = Number(q.split(",")[1].replace(/\s/g, ''));
-    addSaldo(targetNumber, amount, db_saldo);
-    let pendapatanList = [];  
-    const pendapat = "./settings/dbku/pendapatan.json";
-    try {  
-        let dataPendapatan = fs.readFileSync(pendapat, "utf8");  
-        if (dataPendapatan) {  
-            pendapatanList = JSON.parse(dataPendapatan);  
-        }  
-    } catch (error) {  
-        console.error("❌ Error membaca ./settings/dbku/pendapatan.json, membuat file baru.");  
-    }  
+      case 'addsaldo':
+      case 'acc': {
+        if (!isOwner) return reply(mess.owner);
+        if (!q.split(",")[0]) return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${command} 628xxx,20000`);
+        if (!q.split(",")[1]) return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${command} 628xxx,20000`);
+        let targetNumber = q.split(",")[0].replace(/\s/g, '') + "@s.whatsapp.net";
+        let amount = Number(q.split(",")[1].replace(/\s/g, ''));
+        addSaldo(targetNumber, amount, db_saldo);
+        let pendapatanList = [];
+        const pendapat = "./settings/dbku/pendapatan.json";
+        try {
+          let dataPendapatan = fs.readFileSync(pendapat, "utf8");
+          if (dataPendapatan) {
+            pendapatanList = JSON.parse(dataPendapatan);
+          }
+        } catch (error) {
+          console.error("❌ Error membaca ./settings/dbku/pendapatan.json, membuat file baru.");
+        }
 
-    let newData = {  
-        harga: parseInt(amount),  
-        namaBarang: "Penambahan Saldo",
-        pembayaran: "Saldo",
-        total: parseInt(amount),  
-        tanggal: new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }),  
-    };  
-    pendapatanList.push(newData);  
-    try {  
-        fs.writeFileSync(pendapat, JSON.stringify(pendapatanList, null, 2));  
-    } catch (error) {  
-        console.error("❌ Error saat menyimpan ./settings/dbku/pendapatan.json");  
-    }
-    conn.sendMessage(m.chat, {
-      buttons: [
-        { buttonId: `.ceksaldo`, buttonText: { displayText: 'Cek Saldo' }, type: 1 }
-      ],
-      footer: `© 2025 ${global.namebotz}`,
-      headerType: 1,
-      viewOnce: true,
-      text: `💰 *SALDO USER* 💰\n\n` +  
-            `👤 *ID:* @${targetNumber.split("@")[0]}\n` +
-            `📞 *Nomor:* ${q.split(",")[0]}\n` +  
-            `📅 *Tanggal:* ${new Date().toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })}\n` +  
-            `💵 *Saldo:* Rp${toRupiah(cekSaldo(targetNumber, db_saldo))}\n\n✅ *Saldo berhasil ditambahkan!*`,
-      contextInfo: {
-        mentionedJid: [targetNumber],
-      },
-    }, { quoted: m });
-    }
-    break;
-
-case 'kirimsaldo': {  
-    let messageText = `✅ *Deposit Berhasil!*\n\n💰 *Jumlah:* Rp${q.split(",")[1].replace(/\s/g, '')}\n📌 *Saldo Anda telah diperbarui!*\n📝 *Cek saldo dengan mengetik:* .saldo\n\n🙏 Terima kasih!`;  
-    let targetNumber = `${q.split(",")[0].replace(/\s/g, '')}@s.whatsapp.net`;  
-
-    conn.sendMessage(targetNumber, {  
-        text: `*${messageText}*`,  
-        mentions: [m.sender] 
-    }, {  
-        quoted: null
-    }).then(() => {  
+        let newData = {
+          harga: parseInt(amount),
+          namaBarang: "Penambahan Saldo",
+          pembayaran: "Saldo",
+          total: parseInt(amount),
+          tanggal: new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }),
+        };
+        pendapatanList.push(newData);
+        try {
+          fs.writeFileSync(pendapat, JSON.stringify(pendapatanList, null, 2));
+        } catch (error) {
+          console.error("❌ Error saat menyimpan ./settings/dbku/pendapatan.json");
+        }
         conn.sendMessage(m.chat, {
           buttons: [
             { buttonId: `.ceksaldo`, buttonText: { displayText: 'Cek Saldo' }, type: 1 }
@@ -717,306 +772,335 @@ case 'kirimsaldo': {
           footer: `© 2025 ${global.namebotz}`,
           headerType: 1,
           viewOnce: true,
-          text: '✅ *Acc Berhasil, Tuan!*',
+          text: `💰 *SALDO USER* 💰\n\n` +
+            `👤 *ID:* @${targetNumber.split("@")[0]}\n` +
+            `📞 *Nomor:* ${q.split(",")[0]}\n` +
+            `📅 *Tanggal:* ${new Date().toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })}\n` +
+            `💵 *Saldo:* Rp${toRupiah(cekSaldo(targetNumber, db_saldo))}\n\n✅ *Saldo berhasil ditambahkan!*`,
+          contextInfo: {
+            mentionedJid: [targetNumber],
+          },
         }, { quoted: m });
-    }).catch((err) => {  
-        console.error("Error kirim saldo:", err);
-        reply('❌ *Gagal mengirim pesan!* Pastikan nomor target aktif atau bot tidak terblokir olehnya.');  
-    });  
-}
-break;
+      }
+        break;
+
+      case 'kirimsaldo': {
+        let messageText = `✅ *Deposit Berhasil!*\n\n💰 *Jumlah:* Rp${q.split(",")[1].replace(/\s/g, '')}\n📌 *Saldo Anda telah diperbarui!*\n📝 *Cek saldo dengan mengetik:* .saldo\n\n🙏 Terima kasih!`;
+        let targetNumber = `${q.split(",")[0].replace(/\s/g, '')}@s.whatsapp.net`;
+
+        conn.sendMessage(targetNumber, {
+          text: `*${messageText}*`,
+          mentions: [m.sender]
+        }, {
+          quoted: null
+        }).then(() => {
+          conn.sendMessage(m.chat, {
+            buttons: [
+              { buttonId: `.ceksaldo`, buttonText: { displayText: 'Cek Saldo' }, type: 1 }
+            ],
+            footer: `© 2025 ${global.namebotz}`,
+            headerType: 1,
+            viewOnce: true,
+            text: '✅ *Acc Berhasil, Tuan!*',
+          }, { quoted: m });
+        }).catch((err) => {
+          console.error("Error kirim saldo:", err);
+          reply('❌ *Gagal mengirim pesan!* Pastikan nomor target aktif atau bot tidak terblokir olehnya.');
+        });
+      }
+        break;
 
 
-case 'ceksaldo':
-case 'saldo': {
-    const userId = m.sender; 
-    const saldo = cekSaldo(userId, db_saldo);
-    
-    conn.sendMessage(m.chat, {
-        text: `💰 *SALDO ANDA* 💰\n\n` +  
-              `🔹 *ID:* @${userId.split("@")[0]}\n` +  
-              `💵 *Saldo Saat Ini:* Rp${toRupiah(saldo)}\n\n` +
-              `_Gunakan perintah .listproduk untuk melihat apa yang bisa dibeli._`,
-        contextInfo: {
-            mentionedJid: [userId], 
-        },
-    }, { quoted: m });
-    }
-    break; 
-    
-case 'minsaldo':  
-case 'kurangsaldo': {  
-    if (!isOwner) return reply(mess.owner);  
+      case 'ceksaldo':
+      case 'saldo': {
+        const userId = m.sender;
+        const saldo = cekSaldo(userId, db_saldo);
 
-    if (!q.split(",")[0]) return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${command} 628xxx,10000`);  
-    if (!q.split(",")[1]) return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${command} 628xxx,10000`);  
+        conn.sendMessage(m.chat, {
+          text: `💰 *SALDO ANDA* 💰\n\n` +
+            `🔹 *ID:* @${userId.split("@")[0]}\n` +
+            `💵 *Saldo Saat Ini:* Rp${toRupiah(saldo)}\n\n` +
+            `_Gunakan perintah .listproduk untuk melihat apa yang bisa dibeli._`,
+          contextInfo: {
+            mentionedJid: [userId],
+          },
+        }, { quoted: m });
+      }
+        break;
 
-    let targetNumber = q.split(",")[0].replace(/\s/g, '') + "@s.whatsapp.net"; 
-    let amount = Number(q.split(",")[1].replace(/\s/g, ''));
-    const currentSaldo = cekSaldo(targetNumber, db_saldo);
-    if (currentSaldo < amount) {
-        return reply(`❌ Saldo pengguna @${targetNumber.split("@")[0]} hanya Rp${toRupiah(currentSaldo)}. Tidak bisa dikurangi sebesar Rp${toRupiah(amount)}.`);
-    }
-    minSaldo(targetNumber, amount, db_saldo);  
-    let pengeluaranList = [];  
-    const pendapat = "./settings/dbku/pengeluaran.json";
-    try {  
-        let dataPengeluaran = fs.readFileSync(pendapat, "utf8");
-        if (dataPengeluaran) {  
-            pengeluaranList = JSON.parse(dataPengeluaran);  
-        }  
-    } catch (error) {  
-        console.error("❌ Error membaca ./settings/dbku/pengeluaran.json, membuat file baru.");  
-    }  
-    let newData = {  
-        harga: parseInt(amount),  
-        keterangan: "Pengurangan Saldo (Admin)",
-        jenis: "Tarik Saldo",
-        total: parseInt(amount),  
-        tanggal: new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }),  
-    };  
-    pengeluaranList.push(newData);  
-    try {
-        fs.writeFileSync(pendapat, JSON.stringify(pengeluaranList, null, 2));  
-    } catch (error) {  
-        console.error("❌ Error saat menyimpan ./settings/dbku/pengeluaran.json");  
-    }
-    conn.sendMessage(m.chat, {
-      buttons: [
-        { buttonId: `.ceksaldo`, buttonText: { displayText: 'Cek Saldo' }, type: 1 }
-      ],
-      footer: `© 2025 ${global.namebotz}`,
-      headerType: 1,
-      viewOnce: true,
-      text: `💸 *PENGURANGAN SALDO* 💸\n\n` +  
+      case 'minsaldo':
+      case 'kurangsaldo': {
+        if (!isOwner) return reply(mess.owner);
+
+        if (!q.split(",")[0]) return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${command} 628xxx,10000`);
+        if (!q.split(",")[1]) return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${command} 628xxx,10000`);
+
+        let targetNumber = q.split(",")[0].replace(/\s/g, '') + "@s.whatsapp.net";
+        let amount = Number(q.split(",")[1].replace(/\s/g, ''));
+        const currentSaldo = cekSaldo(targetNumber, db_saldo);
+        if (currentSaldo < amount) {
+          return reply(`❌ Saldo pengguna @${targetNumber.split("@")[0]} hanya Rp${toRupiah(currentSaldo)}. Tidak bisa dikurangi sebesar Rp${toRupiah(amount)}.`);
+        }
+        minSaldo(targetNumber, amount, db_saldo);
+        let pengeluaranList = [];
+        const pendapat = "./settings/dbku/pengeluaran.json";
+        try {
+          let dataPengeluaran = fs.readFileSync(pendapat, "utf8");
+          if (dataPengeluaran) {
+            pengeluaranList = JSON.parse(dataPengeluaran);
+          }
+        } catch (error) {
+          console.error("❌ Error membaca ./settings/dbku/pengeluaran.json, membuat file baru.");
+        }
+        let newData = {
+          harga: parseInt(amount),
+          keterangan: "Pengurangan Saldo (Admin)",
+          jenis: "Tarik Saldo",
+          total: parseInt(amount),
+          tanggal: new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }),
+        };
+        pengeluaranList.push(newData);
+        try {
+          fs.writeFileSync(pendapat, JSON.stringify(pengeluaranList, null, 2));
+        } catch (error) {
+          console.error("❌ Error saat menyimpan ./settings/dbku/pengeluaran.json");
+        }
+        conn.sendMessage(m.chat, {
+          buttons: [
+            { buttonId: `.ceksaldo`, buttonText: { displayText: 'Cek Saldo' }, type: 1 }
+          ],
+          footer: `© 2025 ${global.namebotz}`,
+          headerType: 1,
+          viewOnce: true,
+          text: `💸 *PENGURANGAN SALDO* 💸\n\n` +
             `🔹 *ID:* @${targetNumber.split("@")[0]}\n` +
-            `🔹 *Jumlah Dikurangi:* Rp${toRupiah(amount)}\n` +  
+            `🔹 *Jumlah Dikurangi:* Rp${toRupiah(amount)}\n` +
             `💵 *Saldo Sisa:* Rp${toRupiah(cekSaldo(targetNumber, db_saldo))}\n\n✅ *Saldo berhasil dikurangi!*`,
-      contextInfo: {
-        mentionedJid: [targetNumber],
-      },
-    }, { quoted: m });
-    }
-    break;
+          contextInfo: {
+            mentionedJid: [targetNumber],
+          },
+        }, { quoted: m });
+      }
+        break;
 
-case 'buyown': {
-if (cekSaldo(m.sender,db_saldo) < 65000) return conn.sendMessage(m.chat, { text: `Maaf *@${m.sender.split('@')[0]}*, sepertinya saldo kamu kurang dari Rp65.000 Silahkan melakukan deposit terlebih dahulu sebelum *${command}*`, mentions: [m.sender]}, { quoted: m })
-reply(`FAUZIALIFATAH`)
-}
-minSaldo(m.sender, 65000, db_saldo)
-break
+      case 'buyown': {
+        if (cekSaldo(m.sender, db_saldo) < 65000) return conn.sendMessage(m.chat, { text: `Maaf *@${m.sender.split('@')[0]}*, sepertinya saldo kamu kurang dari Rp65.000 Silahkan melakukan deposit terlebih dahulu sebelum *${command}*`, mentions: [m.sender] }, { quoted: m })
+        reply(`FAUZIALIFATAH`)
+      }
+        minSaldo(m.sender, 65000, db_saldo)
+        break
 
-case 'addproduk': {
-    if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
-    const parts = q.split(",");
-    if (parts.length < 3 || isNaN(parts[1].trim())) {
-        return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${prefix}addproduk Premium 1 Bulan,35000,Akses fitur premium selama 1 bulan penuh.`);
-    }
+      case 'addproduk': {
+        if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
+        const parts = q.split(",");
+        if (parts.length < 3 || isNaN(parts[1].trim())) {
+          return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${prefix}addproduk Premium 1 Bulan,35000,Akses fitur premium selama 1 bulan penuh.`);
+        }
 
-    const nama = parts[0].trim();
-    const harga = parts[1].trim();
-    const deskripsi = parts.slice(2).join(",").trim();
+        const nama = parts[0].trim();
+        const harga = parts[1].trim();
+        const deskripsi = parts.slice(2).join(",").trim();
 
-    try {
-        const newProduk = addProduk(nama, harga, deskripsi);
-        const text = `✅ *PRODUK BARU DITAMBAHKAN*\n\n` +
+        try {
+          const newProduk = addProduk(nama, harga, deskripsi);
+          const text = `✅ *PRODUK BARU DITAMBAHKAN*\n\n` +
             `*ID Produk:* ${newProduk.id}\n` +
             `*Nama:* ${newProduk.nama}\n` +
             `*Harga:* Rp${toRupiah(newProduk.harga)}\n` +
             `*Deskripsi:* ${newProduk.deskripsi}\n` +
             `*Ditambahkan:* ${newProduk.tanggalTambah}`;
-        reply(text);
-    } catch (e) {
-        reply(`❌ Gagal menambahkan produk: ${e.message}`);
-    }
-}
-break;
+          reply(text);
+        } catch (e) {
+          reply(`❌ Gagal menambahkan produk: ${e.message}`);
+        }
+      }
+        break;
 
-case 'listproduk': {
-    const produkList = getListProduk();
-    const currentSaldo = cekSaldo(m.sender, db_saldo);
-    
-    let headerText = `👤 *User:* @${m.sender.split('@')[0]}\n💵 *Saldo:* Rp${toRupiah(currentSaldo)}\n\n*Silahkan pilih produk🛍️*:\n`;
+      case 'listproduk': {
+        const produkList = getListProduk();
+        const currentSaldo = cekSaldo(m.sender, db_saldo);
 
-    if (produkList.length === 0) {
-        return conn.sendMessage(m.chat, { 
+        let headerText = `👤 *User:* @${m.sender.split('@')[0]}\n💵 *Saldo:* Rp${toRupiah(currentSaldo)}\n\n*Silahkan pilih produk🛍️*:\n`;
+
+        if (produkList.length === 0) {
+          return conn.sendMessage(m.chat, {
             text: headerText + "\nBelum ada produk yang tersedia saat ini.",
             footer: `© ${global.namebotz || "Bot"} - ${new Date().getFullYear()}`,
             viewOnce: true
-        }, { quoted: m });
-    }
-
-    const productRows = produkList.map((p, index) => ({
-        header: `ID: ${p.id}`,
-        title: `${p.nama} (Rp${toRupiah(p.harga)})`,
-        description: `${p.deskripsi.substring(0, 50)}...`,
-        id: `${prefix}buy ${p.id}`,
-    }));
-
-    const sections = [{
-        title: `Total ${produkList.length} Produk Tersedia`,
-        highlight_label: 'PILIH PRODUK',
-        rows: productRows,
-    }];
-    
-    const buttonMessage = {
-        text: headerText.trim(),
-        footer: `© ${global.namebotz || "Bot"} - ${new Date().getFullYear()}`,
-        buttons: [
-            {
-                buttonId: 'action_list', 
-                buttonText: { displayText: '🛒 BUKA DAFTAR PRODUK' },
-                type: 4,
-                nativeFlowInfo: {
-                    name: 'single_select',
-                    paramsJson: JSON.stringify({
-                        title: 'Daftar Produk',
-                        sections: sections,
-                    }),
-                },
-            },
-            {
-                buttonId: `${prefix}ceksaldo`,
-                buttonText: { displayText: 'Cek Saldo' },
-                type: 1,
-            },
-        ],
-        headerType: 1,
-        viewOnce: true
-    };
-    
-    return await conn.sendMessage(m.chat, buttonMessage, { quoted: metaai });
-}
-break;
-
-case 'delproduk': {
-    if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
-    if (!q) return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${prefix}delproduk PROD-XYZ`);
-
-    const id = q.trim();
-    try {
-        deleteProduk(id);
-        reply(`✅ Produk dengan ID *${id}* berhasil dihapus.`);
-    } catch (e) {
-        reply(e.message);
-    }
-}
-break;
-
-case 'editproduk': {
-    if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
-    const parts = q.split(",");
-    if (parts.length < 3) {
-        return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${prefix}editproduk PROD-XYZ,harga,45000\n${prefix}editproduk PROD-XYZ,nama,Premium 2 Bulan`);
-    }
-
-    const id = parts[0].trim();
-    const field = parts[1].trim().toLowerCase();
-    const value = parts.slice(2).join(",").trim();
-    let newNama, newHarga, newDeskripsi;
-    try {
-        const produk = findProduk(id);
-        if (!produk) throw new Error(`Produk dengan ID *${id}* tidak ditemukan.`);
-
-        newNama = produk.nama;
-        newHarga = produk.harga;
-        newDeskripsi = produk.deskripsi;
-        
-        switch (field) {
-            case 'nama':
-                newNama = value;
-                break;
-            case 'harga':
-                if (isNaN(value)) return reply("Harga harus berupa angka.");
-                newHarga = value;
-                break;
-            case 'deskripsi':
-                newDeskripsi = value;
-                break;
-            default:
-                return reply(`Field *${field}* tidak valid. Field yang tersedia: *nama, harga, deskripsi*.`);
+          }, { quoted: m });
         }
 
-        const updatedProduk = editProduk(id, newNama, newHarga, newDeskripsi);
-        const text = `✅ *PRODUK BERHASIL DIEDIT*\n\n` +
+        const productRows = produkList.map((p, index) => ({
+          header: `ID: ${p.id}`,
+          title: `${p.nama} (Rp${toRupiah(p.harga)})`,
+          description: `${p.deskripsi.substring(0, 50)}...`,
+          id: `${prefix}buy ${p.id}`,
+        }));
+
+        const sections = [{
+          title: `Total ${produkList.length} Produk Tersedia`,
+          highlight_label: 'PILIH PRODUK',
+          rows: productRows,
+        }];
+
+        const buttonMessage = {
+          text: headerText.trim(),
+          footer: `© ${global.namebotz || "Bot"} - ${new Date().getFullYear()}`,
+          buttons: [
+            {
+              buttonId: 'action_list',
+              buttonText: { displayText: '🛒 BUKA DAFTAR PRODUK' },
+              type: 4,
+              nativeFlowInfo: {
+                name: 'single_select',
+                paramsJson: JSON.stringify({
+                  title: 'Daftar Produk',
+                  sections: sections,
+                }),
+              },
+            },
+            {
+              buttonId: `${prefix}ceksaldo`,
+              buttonText: { displayText: 'Cek Saldo' },
+              type: 1,
+            },
+          ],
+          headerType: 1,
+          viewOnce: true
+        };
+
+        return await conn.sendMessage(m.chat, buttonMessage, { quoted: metaai });
+      }
+        break;
+
+      case 'delproduk': {
+        if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
+        if (!q) return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${prefix}delproduk PROD-XYZ`);
+
+        const id = q.trim();
+        try {
+          deleteProduk(id);
+          reply(`✅ Produk dengan ID *${id}* berhasil dihapus.`);
+        } catch (e) {
+          reply(e.message);
+        }
+      }
+        break;
+
+      case 'editproduk': {
+        if (!isOwner) return reply("Perintah ini hanya untuk Owner.");
+        const parts = q.split(",");
+        if (parts.length < 3) {
+          return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${prefix}editproduk PROD-XYZ,harga,45000\n${prefix}editproduk PROD-XYZ,nama,Premium 2 Bulan`);
+        }
+
+        const id = parts[0].trim();
+        const field = parts[1].trim().toLowerCase();
+        const value = parts.slice(2).join(",").trim();
+        let newNama, newHarga, newDeskripsi;
+        try {
+          const produk = findProduk(id);
+          if (!produk) throw new Error(`Produk dengan ID *${id}* tidak ditemukan.`);
+
+          newNama = produk.nama;
+          newHarga = produk.harga;
+          newDeskripsi = produk.deskripsi;
+
+          switch (field) {
+            case 'nama':
+              newNama = value;
+              break;
+            case 'harga':
+              if (isNaN(value)) return reply("Harga harus berupa angka.");
+              newHarga = value;
+              break;
+            case 'deskripsi':
+              newDeskripsi = value;
+              break;
+            default:
+              return reply(`Field *${field}* tidak valid. Field yang tersedia: *nama, harga, deskripsi*.`);
+          }
+
+          const updatedProduk = editProduk(id, newNama, newHarga, newDeskripsi);
+          const text = `✅ *PRODUK BERHASIL DIEDIT*\n\n` +
             `*ID Produk:* ${updatedProduk.id}\n` +
             `*Nama:* ${updatedProduk.nama}\n` +
             `*Harga:* Rp${toRupiah(updatedProduk.harga)}\n` +
             `*Deskripsi:* ${updatedProduk.deskripsi}\n` +
             `*Terakhir Edit:* ${updatedProduk.tanggalEdit}`;
-        reply(text);
+          reply(text);
 
-    } catch (e) {
-        reply(`❌ Gagal mengedit produk: ${e.message}`);
-    }
-}
-break;
+        } catch (e) {
+          reply(`❌ Gagal mengedit produk: ${e.message}`);
+        }
+      }
+        break;
 
-case 'buy': {
-    if (!q) return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${prefix}buy ID_PRODUK\n\n_Lihat ID produk dengan ${prefix}listproduk_`);
-    const id = q.trim();
-    const produk = findProduk(id);
-    if (!produk) {
-        return reply(`❌ Produk dengan ID *${id}* tidak ditemukan. Cek ${prefix}listproduk.`);
-    }
-    const requiredSaldo = produk.harga;
-    const currentSaldo = cekSaldo(m.sender, db_saldo);
-    const command = `${prefix}buy ${id}`;
-    if (currentSaldo < requiredSaldo) { 
-        return conn.sendMessage(m.chat, { 
-            text: `Maaf *@${m.sender.split('@')[0]}*, sepertinya saldo kamu kurang dari *Rp${toRupiah(requiredSaldo)}*. Saldo kamu saat ini: *Rp${toRupiah(currentSaldo)}*. Silahkan melakukan deposit terlebih dahulu sebelum *${command}*`, 
+      case 'buy': {
+        if (!q) return reply(`⚠️ *Format Salah!*\n\n🔹 Contoh Penggunaan:\n${prefix}buy ID_PRODUK\n\n_Lihat ID produk dengan ${prefix}listproduk_`);
+        const id = q.trim();
+        const produk = findProduk(id);
+        if (!produk) {
+          return reply(`❌ Produk dengan ID *${id}* tidak ditemukan. Cek ${prefix}listproduk.`);
+        }
+        const requiredSaldo = produk.harga;
+        const currentSaldo = cekSaldo(m.sender, db_saldo);
+        const command = `${prefix}buy ${id}`;
+        if (currentSaldo < requiredSaldo) {
+          return conn.sendMessage(m.chat, {
+            text: `Maaf *@${m.sender.split('@')[0]}*, sepertinya saldo kamu kurang dari *Rp${toRupiah(requiredSaldo)}*. Saldo kamu saat ini: *Rp${toRupiah(currentSaldo)}*. Silahkan melakukan deposit terlebih dahulu sebelum *${command}*`,
             mentions: [m.sender]
-        }, { quoted: m });
-    }
-    try {
-        minSaldo(m.sender, requiredSaldo, db_saldo);
-        let benefitMessage = `🎉 *PEMBELIAN BERHASIL!* 🎉\n\n` +
+          }, { quoted: m });
+        }
+        try {
+          minSaldo(m.sender, requiredSaldo, db_saldo);
+          let benefitMessage = `🎉 *PEMBELIAN BERHASIL!* 🎉\n\n` +
             `*Produk:* ${produk.nama}\n` +
             `*Harga:* Rp${toRupiah(produk.harga)}\n` +
             `*Sisa Saldo:* Rp${toRupiah(cekSaldo(m.sender, db_saldo))}\n\n` +
             `*Deskripsi Produk:* ${produk.deskripsi}\n\n` +
             `_Notifikasi atau akses produk akan dikirimkan oleh owner bot._`;
-        reply(benefitMessage);
-        conn.sendMessage(global.owner[0] + "@s.whatsapp.net", {
+          reply(benefitMessage);
+          conn.sendMessage(global.owner[0] + "@s.whatsapp.net", {
             text: `🔔 *NOTIFIKASI PEMBELIAN*\n\nUser: @${m.sender.split('@')[0]}\nMembeli: ${produk.nama}\nID Produk: ${produk.id}\nHarga: Rp${toRupiah(requiredSaldo)}\n\n*Tindak lanjuti pembelian ini!*`,
             mentions: [m.sender]
-        });
+          });
 
-    } catch (e) {
-        console.error("Error saat proses pembelian:", e);
-        reply("❌ Terjadi kesalahan saat memproses pembelian. Coba lagi atau hubungi owner.");
-    }
+        } catch (e) {
+          console.error("Error saat proses pembelian:", e);
+          reply("❌ Terjadi kesalahan saat memproses pembelian. Coba lagi atau hubungi owner.");
+        }
 
-}
-break;
-
-
-break;
+      }
+        break;
 
 
-case "cekapikey":
-case "cekkey": {
-    if (!q) return reply(`Contoh Penggunaan:\n${prefix}cekapikey [API Key anda]`);
-    
-    const API_KEY_TO_CHECK = q.trim();
-    const BASE_URL = "https://velyn.mom/api/tools/check";
-    
-    await reaction(m.chat, "🔎"); 
-    
-    try {
-        const response = await axios.get(BASE_URL, {
+        break;
+
+
+      case "cekapikey":
+      case "cekkey": {
+        if (!q) return reply(`Contoh Penggunaan:\n${prefix}cekapikey [API Key anda]`);
+
+        const API_KEY_TO_CHECK = q.trim();
+        const BASE_URL = "https://velyn.mom/api/tools/check";
+
+        await reaction(m.chat, "🔎");
+
+        try {
+          const response = await axios.get(BASE_URL, {
             params: { apikey: API_KEY_TO_CHECK }
-        });
-        
-        const result = response.data;
-        const data = result.data;
-        
-        if (result.success === true && data) {
-            
+          });
+
+          const result = response.data;
+          const data = result.data;
+
+          if (result.success === true && data) {
+
             const createdAtDate = new Date(data.createdAt).toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" });
-            
-            let replyText = 
-`*HASIL CEK API KEY*
+
+            let replyText =
+              `*HASIL CEK API KEY*
 
 *Status:* ✅ *AKTIF*
 *Key:* \`${data.key}\`
@@ -1025,36 +1109,36 @@ case "cekkey": {
 *Dibuat Pada:* ${createdAtDate}
 *Reset Credit:* ${data.daysUntilReset} hari lagi`;
             reply(replyText.trim());
-        } else {
-            
-            let replyText = 
-`🔑 *HASIL CEK API KEY* 🔑
+          } else {
+
+            let replyText =
+              `🔑 *HASIL CEK API KEY* 🔑
 
 *Key:* \`${API_KEY_TO_CHECK}\`
 *Status:* ❌ *TIDAK VALID / KADALUARSA*
 *Pesan API:* ${result.message || 'API Key tidak valid atau tidak terdaftar.'}`;
             reply(replyText.trim());
-        }
+          }
 
-    } catch (error) {
-        let status = error.response?.status;
-        let errorMessage;
+        } catch (error) {
+          let status = error.response?.status;
+          let errorMessage;
 
-        if (status === 404) {
+          if (status === 404) {
             errorMessage = `❌ *Gagal:* Terjadi kesalahan koneksi (Status 404).\n\n`
-                         + `Mohon pastikan API Key benar dan *endpoint* \`${BASE_URL}\` valid.`;
-        } else {
+              + `Mohon pastikan API Key benar dan *endpoint* \`${BASE_URL}\` valid.`;
+          } else {
             errorMessage = `❌ Terjadi kesalahan koneksi. Status: ${status || 'N/A'}. Pesan: ${error.message}`;
+          }
+
+          reply(errorMessage);
         }
-        
-        reply(errorMessage);
-    }
-}
-break;
+      }
+        break;
 
 
 
-  default:
+      default:
     }
   } catch (err) {
     conn.sendMessage(m.chat, { text: util.format(err) }, { quoted: m });

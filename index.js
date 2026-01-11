@@ -1,4 +1,4 @@
-import "./settings/config.js"; 
+import "./settings/config.js";
 import {
   makeWASocket,
   useMultiFileAuthState,
@@ -22,10 +22,17 @@ import { spawn } from "child_process";
 import { fileURLToPath, pathToFileURL } from "url";
 import path from "path";
 import { smsg } from "./source/myfunc.js";
+import express from "express";
 const ff = ffmpeg;
 
 global.mode = true;
+global.pendingPairNumber = null;
+global.pendingPairResolver = null;
 global.sessionName = "session";
+
+
+const app = express();
+const PORT = process.env.PORT || 3000;
 
 const asciiArt = () => {
   console.log(chalk.redBright(`
@@ -104,7 +111,9 @@ async function startServer() {
     await relogfile();
     fs.watchFile(caserelog, relogfile);
 
-    const { state, saveCreds } = await useMultiFileAuthState("./" + sessionName);
+    const sessionPath = `./${sessionName}`;
+
+    const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
     const conn = makeWASocket({
       printQRInTerminal: false,
       logger: pino({ level: "silent" }),
@@ -123,13 +132,15 @@ async function startServer() {
 
     if (!conn.authState.creds.registered) {
       asciiArt();
-      const phoneNumber = global.pairingPhoneNumber;
+      while (!global.pendingPairNumber) { await new Promise(r => setTimeout(r, 500)); }
+    
+      const phoneNumber = global.pendingPairNumber;
       const customCode = global.customPairingCode;
       if (!phoneNumber || !customCode || customCode.length !== 8) {
-          console.error(chalk.redBright("Pairing Code di config.js tidak valid."));
-          console.error(chalk.redBright(`Nomor: ${phoneNumber || 'Kosong'}, Code: ${customCode || 'Kosong'} (harus 8 digit).`));
-          process.exit(1);
-          return;
+        console.error(chalk.redBright("Pairing Code di config.js tidak valid."));
+        console.error(chalk.redBright(`Nomor: ${phoneNumber || 'Kosong'}, Code: ${customCode || 'Kosong'} (harus 8 digit).`));
+        process.exit(1);
+        return;
       }
       console.log(chalk.cyan("╭──────────────────────────────────────···"));
       console.log(`📱 ${chalk.redBright("Nomor yang akan di-pair")}: ${chalk.cyan(phoneNumber)}`);
@@ -137,13 +148,22 @@ async function startServer() {
       await new Promise(resolve => setTimeout(resolve, 3000));
       const codeResult = await conn.requestPairingCode(phoneNumber, customCode);
       const displayCode = codeResult?.match(/.{1,4}/g)?.join("-") || codeResult;
+
+      // 🔥 kirim ke /pair
+      if (typeof global.pendingPairResolver === "function") {
+        global.pendingPairResolver(displayCode);
+      }
+
+      // reset state
+      global.pendingPairNumber = null;
+      global.pendingPairResolver = null;
       console.log(`  ${chalk.yellow("Pairing code:")} Masukkan kode ${chalk.cyan.bold(displayCode)}.`);
       console.log(chalk.cyan("╰──────────────────────────────────────···"));
-      
+
       if (rl && !rl.closed) rl.close();
     }
 
-	conn.ev.on("messages.upsert", async (chatUpdate) => {
+    conn.ev.on("messages.upsert", async (chatUpdate) => {
       try {
         let m = chatUpdate.messages[0];
         if (!m?.message) return;
@@ -177,78 +197,166 @@ async function startServer() {
     conn.public = mode;
     conn.serializeM = (m) => smsg(conn, m);
 
-conn.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect } = update;
+    conn.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect } = update;
 
-    if (connection === "close") {
+      if (connection === "close") {
         const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
 
         console.log("Koneksi terputus:", reason);
 
         const errorList = [
-            DisconnectReason.connectionLost,
-            DisconnectReason.connectionReplaced,
-            DisconnectReason.restartRequired,
-            DisconnectReason.timedOut,
-            405,
-            408,
-            410,
-            500,
-            503
+          DisconnectReason.connectionLost,
+          DisconnectReason.connectionReplaced,
+          DisconnectReason.restartRequired,
+          DisconnectReason.timedOut,
+          405,
+          408,
+          410,
+          500,
+          503
         ];
 
         if (errorList.includes(reason)) {
-            console.log("Mencoba menyambung ulang tanpa menghapus session...");
-            await startServer();
-            return;
+          console.log("Mencoba menyambung ulang tanpa menghapus session...");
+          await startServer();
+          return;
         }
 
         console.log("Menyambung ulang secara paksa...");
         const { spawn } = await import("child_process");
         spawn(process.argv[0], [process.argv[1]], {
-            stdio: "inherit",
-            detached: true
+          stdio: "inherit",
+          detached: true
         }).unref();
         process.exit(0);
-    }
+      }
 
-    if (connection === "open") {
+      if (connection === "open") {
         await loadConnect(conn);
         console.log("Bot berhasil tersambung.");
+      }
+    });
+
+
+    conn.getFile = async (PATH, returnAsFilename) => {
+      let res, filename, data
+
+      if (Buffer.isBuffer(PATH)) {
+        data = PATH
+      } else if (/^data:.*?\/.*?;base64,/i.test(PATH)) {
+        data = Buffer.from(PATH.split(',')[1], 'base64')
+      } else if (/^https?:\/\//.test(PATH)) {
+        res = await fetch(PATH)
+        const arrayBuffer = await res.arrayBuffer()
+        data = Buffer.from(arrayBuffer)
+      } else if (fs.existsSync(PATH)) {
+        filename = PATH
+        data = fs.readFileSync(PATH)
+      } else if (typeof PATH === 'string') {
+        data = Buffer.from(PATH)
+      } else {
+        data = Buffer.alloc(0)
+      }
+
+      if (!Buffer.isBuffer(data)) throw new TypeError('Result is not a buffer')
+
+      const type = await fileType.fromBuffer(data) || {
+        mime: 'application/octet-stream',
+        ext: 'bin'
+      }
+
+      if (returnAsFilename && !filename) {
+        filename = path.join(__dirname, './tmp/' + Date.now() + '.' + type.ext)
+        await fs.promises.writeFile(filename, data)
+      }
+
+      return {
+        res,
+        filename,
+        ...type,
+        data,
+        deleteFile() {
+          return filename && fs.promises.unlink(filename)
+        }
+      }
     }
-});
-    
-conn.downloadAndSaveMediaMessage = async (message, filename, attachExtension = true) => {
-  try {
-    const quoted = message.msg ? message.msg : message;
-    const mime = (message.msg || message).mimetype || "";
-    const messageType = message.mtype
-      ? message.mtype.replace(/Message/gi, "")
-      : mime.split("/")[0];
 
-    const Randoms = Date.now();
-    const name = filename || `file_${Randoms}`;
+    conn.sendFile = async (jid, path, filename = '', caption = '', quoted, ptt = false, options = {}) => {
+      let type = await conn.getFile(path, true)
+      let { res, data: file, filename: pathFile } = type
+      if (res && res.status !== 200 || file.length <= 65536) {
+        try { throw { json: JSON.parse(file.toString()) } }
+        catch (e) { if (e.json) throw e.json }
+      }
+      let opt = { filename }
+      if (quoted) opt.quoted = quoted
+      if (!type) options.asDocument = true
+      let mtype = '', mimetype = type.mime, convert
+      if (/webp/.test(type.mime) || (/image/.test(type.mime) && options.asSticker)) mtype = 'sticker'
+      else if (/image/.test(type.mime) || (/webp/.test(type.mime) && options.asImage)) mtype = 'image'
+      else if (/video/.test(type.mime)) mtype = 'video'
+      else if (/audio/.test(type.mime)) (
+        convert = await (ptt ? toPTT : toAudio)(file, type.ext),
+        file = convert.data,
+        pathFile = convert.filename,
+        mtype = 'audio',
+        mimetype = 'audio/ogg; codecs=opus'
+      )
+      else mtype = 'document'
+      if (options.asDocument) mtype = 'document'
 
-    const stream = await downloadContentFromMessage(quoted, messageType);
-    let buffer = Buffer.from([]);
-
-    for await (const chunk of stream) {
-      buffer = Buffer.concat([buffer, chunk]);
+      let message = {
+        ...options,
+        caption,
+        ptt,
+        [mtype]: { url: pathFile },
+        mimetype
+      }
+      let m
+      try {
+        m = await conn.sendMessage(jid, message, { ...opt, ...options })
+      } catch (e) {
+        console.error(e)
+        m = null
+      } finally {
+        if (!m) m = await conn.sendMessage(jid, { ...message, [mtype]: file }, { ...opt, ...options })
+        return m
+      }
     }
 
-    const type = await fileType.fromBuffer(buffer);
-    const ext = type?.ext || "bin";
 
-    const finalName = attachExtension ? `${name}.${ext}` : name;
+    conn.downloadAndSaveMediaMessage = async (message, filename, attachExtension = true) => {
+      try {
+        const quoted = message.msg ? message.msg : message;
+        const mime = (message.msg || message).mimetype || "";
+        const messageType = message.mtype
+          ? message.mtype.replace(/Message/gi, "")
+          : mime.split("/")[0];
 
-    fs.writeFileSync(finalName, buffer);
+        const Randoms = Date.now();
+        const name = filename || `file_${Randoms}`;
 
-    return finalName;
-  } catch (err) {
-    console.error("Error saat download media:", err);
-    return null;
-  }
-};
+        const stream = await downloadContentFromMessage(quoted, messageType);
+        let buffer = Buffer.from([]);
+
+        for await (const chunk of stream) {
+          buffer = Buffer.concat([buffer, chunk]);
+        }
+
+        const type = await fileType.fromBuffer(buffer);
+        const ext = type?.ext || "bin";
+
+        const finalName = attachExtension ? `${name}.${ext}` : name;
+
+        fs.writeFileSync(finalName, buffer);
+
+        return finalName;
+      } catch (err) {
+        console.error("Error saat download media:", err);
+        return null;
+      }
+    };
 
     conn.sendText = (jid, teks, quoted = "", options = {}) => conn.sendMessage(jid, { text: teks, ...options }, { quoted, ...options });
 
@@ -256,110 +364,110 @@ conn.downloadAndSaveMediaMessage = async (message, filename, attachExtension = t
       const buffer = Buffer.isBuffer(path)
         ? path
         : /^https?:\/\//.test(path)
-        ? await getBuffer(path)
-        : fs.existsSync(path)
-        ? fs.readFileSync(path)
-        : Buffer.alloc(0);
+          ? await getBuffer(path)
+          : fs.existsSync(path)
+            ? fs.readFileSync(path)
+            : Buffer.alloc(0);
       return await conn.sendMessage(jid, { image: buffer, caption, ...options }, { quoted });
     };
 
     conn.sendAudio = async (jid, buff, options = {}) => {
-        async function downloadAudio(input) {
-            if (Buffer.isBuffer(input)) return input;
-            if (typeof input === 'string' && (input.startsWith('http') || input.startsWith('https'))) {
-                const response = await axios.get(input, { 
-                    responseType: 'arraybuffer',
-                    timeout: 30000
-                });
-                return Buffer.from(response.data);
-            } else if (typeof input === 'string') {
-                return fs.readFileSync(input);
-            } else {
-                throw new Error('Input harus Buffer, URL, atau path file');
-            }
+      async function downloadAudio(input) {
+        if (Buffer.isBuffer(input)) return input;
+        if (typeof input === 'string' && (input.startsWith('http') || input.startsWith('https'))) {
+          const response = await axios.get(input, {
+            responseType: 'arraybuffer',
+            timeout: 30000
+          });
+          return Buffer.from(response.data);
+        } else if (typeof input === 'string') {
+          return fs.readFileSync(input);
+        } else {
+          throw new Error('Input harus Buffer, URL, atau path file');
         }
-        
-        const audioBuffer = await downloadAudio(buff);
-        const opusBuffer = await new Promise((resolve, reject) => {
-            const inStream = new PassThrough();
-            const outStream = new PassThrough();
-            const chunks = [];
-            inStream.end(audioBuffer);
-            ff(inStream)
-                .noVideo()
-                .audioCodec('libopus')
-                .format('ogg')
-                .audioBitrate('48k')
-                .audioChannels(1)
-                .audioFrequency(48000)
-                .outputOptions([
-                    '-vn',
-                    '-b:a 64k',
-                    '-ac 2',
-                    '-ar 48000',
-                    '-map_metadata', '-1',
-                    '-application', 'voip'
-                ])
-                .on('error', reject)
-                .on('end', () => resolve(Buffer.concat(chunks)))
-                .pipe(outStream, { end: true });
-            outStream.on('data', c => chunks.push(c));
-        });
-        
-        const waveform = await new Promise((resolve, reject) => {
-            const inputStream = new PassThrough();
-            inputStream.end(audioBuffer);
-            const chunks = [];
-            const bars = 64;
-            ff(inputStream)
-                .audioChannels(1)
-                .audioFrequency(16000)
-                .format('s16le')
-                .on('error', reject)
-                .on('end', () => {
-                    const rawData = Buffer.concat(chunks);
-                    const samples = rawData.length / 2;
-                    const amplitudes = [];
-                    
-                    for (let i = 0; i < samples; i++) {
-                        amplitudes.push(Math.abs(rawData.readInt16LE(i * 2)) / 32768);
-                    }
-                    
-                    const blockSize = Math.floor(amplitudes.length / bars);
-                    const avg = [];
-                    for (let i = 0; i < bars; i++) {
-                        const block = amplitudes.slice(i * blockSize, (i + 1) * blockSize);
-                        avg.push(block.reduce((a, b) => a + b, 0) / block.length);
-                    }
-                
-                    const max = Math.max(...avg);
-                    const normalized = avg.map(v => Math.floor((v / max) * 100));
-                    resolve(Buffer.from(new Uint8Array(normalized)).toString('base64'));
-                })
-                .pipe()
-                .on('data', chunk => chunks.push(chunk));
-        });
-        
-        return await conn.sendMessage(jid, {
-            audio: opusBuffer,
-            mimetype: 'audio/ogg; codecs=opus',
-            ptt: options.ptt !== undefined ? options.ptt : true,
-            waveform: waveform
-        }, {
-            quoted: options.quoted,
-            ephemeralExpiration: options.ephemeralExpiration,
-            contextInfo: options.contextInfo
-        });
+      }
+
+      const audioBuffer = await downloadAudio(buff);
+      const opusBuffer = await new Promise((resolve, reject) => {
+        const inStream = new PassThrough();
+        const outStream = new PassThrough();
+        const chunks = [];
+        inStream.end(audioBuffer);
+        ff(inStream)
+          .noVideo()
+          .audioCodec('libopus')
+          .format('ogg')
+          .audioBitrate('48k')
+          .audioChannels(1)
+          .audioFrequency(48000)
+          .outputOptions([
+            '-vn',
+            '-b:a 64k',
+            '-ac 2',
+            '-ar 48000',
+            '-map_metadata', '-1',
+            '-application', 'voip'
+          ])
+          .on('error', reject)
+          .on('end', () => resolve(Buffer.concat(chunks)))
+          .pipe(outStream, { end: true });
+        outStream.on('data', c => chunks.push(c));
+      });
+
+      const waveform = await new Promise((resolve, reject) => {
+        const inputStream = new PassThrough();
+        inputStream.end(audioBuffer);
+        const chunks = [];
+        const bars = 64;
+        ff(inputStream)
+          .audioChannels(1)
+          .audioFrequency(16000)
+          .format('s16le')
+          .on('error', reject)
+          .on('end', () => {
+            const rawData = Buffer.concat(chunks);
+            const samples = rawData.length / 2;
+            const amplitudes = [];
+
+            for (let i = 0; i < samples; i++) {
+              amplitudes.push(Math.abs(rawData.readInt16LE(i * 2)) / 32768);
+            }
+
+            const blockSize = Math.floor(amplitudes.length / bars);
+            const avg = [];
+            for (let i = 0; i < bars; i++) {
+              const block = amplitudes.slice(i * blockSize, (i + 1) * blockSize);
+              avg.push(block.reduce((a, b) => a + b, 0) / block.length);
+            }
+
+            const max = Math.max(...avg);
+            const normalized = avg.map(v => Math.floor((v / max) * 100));
+            resolve(Buffer.from(new Uint8Array(normalized)).toString('base64'));
+          })
+          .pipe()
+          .on('data', chunk => chunks.push(chunk));
+      });
+
+      return await conn.sendMessage(jid, {
+        audio: opusBuffer,
+        mimetype: 'audio/ogg; codecs=opus',
+        ptt: options.ptt !== undefined ? options.ptt : true,
+        waveform: waveform
+      }, {
+        quoted: options.quoted,
+        ephemeralExpiration: options.ephemeralExpiration,
+        contextInfo: options.contextInfo
+      });
     };
 
     conn.sendVideo = async (jid, path, caption = "", quoted = "", gif = false, options = {}) => {
       const buffer = Buffer.isBuffer(path)
         ? path
         : /^https_?:\/\//.test(path)
-        ? await getBuffer(path)
-        : fs.existsSync(path)
-        ? fs.readFileSync(path)
-        : Buffer.alloc(0);
+          ? await getBuffer(path)
+          : fs.existsSync(path)
+            ? fs.readFileSync(path)
+            : Buffer.alloc(0);
       return await conn.sendMessage(jid, { video: buffer, caption, gifPlayback: gif, ...options }, { quoted });
     };
 
@@ -368,10 +476,88 @@ conn.downloadAndSaveMediaMessage = async (message, filename, attachExtension = t
   await child();
 }
 
+const tmp = path.join(process.cwd(), 'tmp')
+
+const clearTmp = async () => {
+  if (!fs.existsSync(tmp)) return
+  for (const f of await fs.promises.readdir(tmp))
+    await fs.promises.unlink(path.join(tmp, f))
+}
+
+const schedule3WIB = () => {
+  const now = new Date()
+  const next = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }))
+  next.setHours(3, 0, 0, 0)
+  if (now >= next) next.setDate(next.getDate() + 1)
+
+  setTimeout(() => {
+    clearTmp()
+    setInterval(clearTmp, 86400000)
+  }, next - now)
+}
+
+schedule3WIB()
+
 startServer();
+
+
+app.get("/pair", async (req, res) => {
+  const number = req.query.number;
+
+  if (!number || !/^\d{8,15}$/.test(number)) {
+    return res.status(400).json({
+      ok: false,
+      message: "Nomor tidak valid"
+    });
+  }
+
+  if (global.pendingPairNumber) {
+    return res.status(429).json({
+      ok: false,
+      message: "Pairing sedang berlangsung"
+    });
+  }
+
+  try {
+    const code = await new Promise((resolve, reject) => {
+      global.pendingPairNumber = number;
+      global.pendingPairResolver = resolve;
+
+      // safety timeout (60 detik)
+      setTimeout(() => {
+        if (global.pendingPairResolver === resolve) {
+          global.pendingPairNumber = null;
+          global.pendingPairResolver = null;
+          reject(new Error("Timeout pairing"));
+        }
+      }, 60000);
+    });
+
+    res.json({
+      ok: true,
+      number,
+      code
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: err.message
+    });
+  }
+});
+
+
+app.listen(PORT, () => {
+  console.log(chalk.greenBright(`🌐 Pair server aktif di http://localhost:${PORT}/pair`));
+});
 
 fs.watchFile(__filename, () => {
   console.log(chalk.redBright(`📦 File ${__filename} berubah, restart bot...`));
   spawn(process.argv[0], [__filename], { stdio: "inherit" });
   process.exit();
 });
+
+
+
+

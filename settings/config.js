@@ -2,14 +2,14 @@ import fs from "fs";
 import chalk from "chalk";
 
 /** info id **/
-global.owner = ["628xx","99xx@lid"]; // wajib ada lid dan jid
+global.owner = ["6285770017326"]; // wajib ada lid dan jid
 global.mode = false;
 
 global.nauvalApiKey = "", // https://ytdlpyton.nvlgroup.my.id/docs
 global.velynApiKey = ""; //https://velyn.mom
 
 /** pairing Code Settings **/
-global.pairingPhoneNumber = "628xx"; 
+global.pairingPhoneNumber = "6285179840140"; 
 global.customPairingCode = "12345678"; 
 
 /** settings panel **/
@@ -21,17 +21,17 @@ global.apikey = ""; // Isi api ptla
 global.capikey = ""; // Isi api ptlc
 
 /** nama bot **/
-global.namebotz = "Alifatah wabot !";
-global.packname = 'www.ziihost.store';
-global.nameown = "Fauzialifatah | Projects";
-global.author = 'https://www.github.com/Alifatahfauzi';
-global.footer = "𝗍𝖾𝗅𝖾𝗀𝗋𝖺𝗆: @FauziAlifatah";
+global.namebotz = "XNOVA BOT";
+global.packname = 'SuperXNova';
+global.nameown = "XNOVA | SuperXNova';";
+global.author = 'NOVA';
+global.footer = "Keep Creative!!! | XNOVA BOT";
 
 /** media **/
-global.YouTube = "https://www.youtube.com/@Fauzialifatah";
-global.GitHub = "https://github.com/Alifatahfauzi";
-global.Telegram = "https://t.me/FauziAlifatah";
-global.ChannelWA = "https://whatsapp.com/channel/0029VawsCnQ9mrGkOuburC1z";
+global.YouTube = "https://www.youtube.com/";
+global.GitHub = "https://github.com/";
+global.Telegram = "https://t.me/";
+global.ChannelWA = "https://whatsapp.com/";
 
 /** message **/
 global.mess = {
