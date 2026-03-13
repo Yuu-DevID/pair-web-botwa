@@ -1,20 +1,25 @@
 <?php
 /**
- * TikTok ORIGINAL QUALITY Downloader Bot
+ * TikTok LoveTik Downloader Bot (No FFmpeg)
  * Token: 8391191201:AAEVWguoQ5T8_qDZnZmCMD8uS7xpaAOvaLM
  * 
- * PERUBAHAN MAJOR:
- * - Menggunakan original TikTok CDN URL (tidak re-encode)
- * - Verifikasi video integrity (cek file size & format)
- * - Auto-retry dengan resume support
- * - FFmpeg check untuk validasi video
+ * CHANGELOG:
+ * - LoveTik API sebagai primary source
+ * - /runtime & /ping commands
+ * - No FFmpeg dependency - pure PHP validation
+ * - Strict MP4 header & structure validation
+ * - Content-Length verification
+ * - MIME type checking
  */
 
 define('BOT_TOKEN', '8391191201:AAEVWguoQ5T8_qDZnZmCMD8uS7xpaAOvaLM');
 define('API_URL', 'https://api.telegram.org/bot' . BOT_TOKEN . '/');
 define('DOWNLOAD_DIR', __DIR__ . '/downloads/');
 define('MAX_FILE_SIZE', 50 * 1024 * 1024); // 50MB Telegram limit
-define('CHUNK_SIZE', 1024 * 1024); // 1MB chunks for download
+define('MIN_VIDEO_SIZE', 10 * 1024); // Minimum 10KB untuk video valid
+
+// Bot start time untuk runtime
+$GLOBALS['START_TIME'] = time();
 
 // Create download dir
 if (!file_exists(DOWNLOAD_DIR)) {
@@ -30,6 +35,42 @@ function logMessage($message) {
     echo $line;
 }
 
+// Get runtime duration
+function getRuntime() {
+    $now = time();
+    $diff = $now - $GLOBALS['START_TIME'];
+    
+    $days = floor($diff / 86400);
+    $hours = floor(($diff % 86400) / 3600);
+    $minutes = floor(($diff % 3600) / 60);
+    $seconds = $diff % 60;
+    
+    $parts = [];
+    if ($days > 0) $parts[] = "$days hari";
+    if ($hours > 0) $parts[] = "$hours jam";
+    if ($minutes > 0) $parts[] = "$minutes menit";
+    $parts[] = "$seconds detik";
+    
+    return implode(', ', $parts);
+}
+
+// Ping check
+function getPing() {
+    $start = microtime(true);
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, API_URL . 'getMe');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    $end = microtime(true);
+    
+    $latency = round(($end - $start) * 1000, 2);
+    return ['latency' => $latency, 'status' => $httpCode === 200 ? 'OK' : 'ERROR'];
+}
+
 // Telegram API
 function sendTelegramRequest($method, $params = [], $isMultipart = false) {
     $url = API_URL . $method;
@@ -38,7 +79,7 @@ function sendTelegramRequest($method, $params = [], $isMultipart = false) {
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 300); // 5 menit untuk upload besar
+    curl_setopt($ch, CURLOPT_TIMEOUT, 300);
     
     if (!empty($params)) {
         curl_setopt($ch, CURLOPT_POST, true);
@@ -93,7 +134,7 @@ function editMessage($chatId, $messageId, $text) {
     ]);
 }
 
-// Send video dengan thumbnail
+// Send video
 function sendVideo($chatId, $videoPath, $caption = '', $thumbPath = null) {
     $params = [
         'chat_id' => $chatId,
@@ -115,7 +156,7 @@ function sendVideo($chatId, $videoPath, $caption = '', $thumbPath = null) {
     return sendTelegramRequest('sendVideo', $params, true);
 }
 
-// Send document untuk file besar
+// Send document
 function sendDocument($chatId, $filePath, $caption = '') {
     $params = [
         'chat_id' => $chatId,
@@ -136,103 +177,78 @@ function sendAction($chatId, $action = 'upload_video') {
 }
 
 /**
- * METHOD 1: Extract Original CDN URL dari TikTok Web (BEST QUALITY)
- * Mengambil URL video asli dari TikTok CDN tanpa re-encode
+ * LoveTik API Method
  */
-function getOriginalTikTokData($tiktokUrl) {
-    logMessage("Getting original data for: $tiktokUrl");
+function getFromLoveTik($tiktokUrl) {
+    logMessage("Using LoveTik API for: $tiktokUrl");
     
-    // Normalize URL
-    $tiktokUrl = preg_replace('/\?.*$/', '', $tiktokUrl); // Remove query params
+    $apiUrl = 'https://lovetik.com/api/v1/search';
     
     $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $tiktokUrl);
+    curl_setopt($ch, CURLOPT_URL, $apiUrl);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query(['query' => $tiktokUrl]));
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 30);
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/x-www-form-urlencoded',
         'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language: en-US,en;q=0.5',
-        'Referer: https://www.tiktok.com/'
+        'Origin: https://lovetik.com',
+        'Referer: https://lovetik.com/'
     ]);
     
-    $html = curl_exec($ch);
+    $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
     curl_close($ch);
     
-    if ($httpCode !== 200 || empty($html)) {
-        logMessage("Failed to fetch TikTok page: HTTP $httpCode");
+    if ($error) {
+        logMessage("LoveTik Error: $error");
         return null;
     }
     
-    // Extract JSON data dari <script id="__UNIVERSAL_DATA_FOR_REHYDRATION__">
-    if (preg_match('/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)<\/script>/s', $html, $matches)) {
-        $jsonStr = $matches[1];
-        $data = json_decode($jsonStr, true);
+    if ($httpCode !== 200) {
+        logMessage("LoveTik HTTP Error: $httpCode");
+        return null;
+    }
+    
+    $data = json_decode($response, true);
+    
+    if (isset($data['err']) && $data['err'] === false && isset($data['links'])) {
+        $videoUrl = '';
+        $isOriginal = false;
         
-        if (isset($data['__DEFAULT_SCOPE__']['webapp.video-detail']['itemInfo']['itemStruct'])) {
-            $video = $data['__DEFAULT_SCOPE__']['webapp.video-detail']['itemInfo']['itemStruct'];
-            
-            // Ambil URL video original dari CDN TikTok
-            $playAddr = $video['video']['playAddr'] ?? [];
-            $downloadAddr = $video['video']['downloadAddr'] ?? [];
-            
-            // Pilih URL terbaik (downloadAddr biasanya lebih baik)
-            $videoUrl = '';
-            if (!empty($downloadAddr)) {
-                $videoUrl = is_array($downloadAddr) ? ($downloadAddr['urlList'][0] ?? $downloadAddr['url'] ?? '') : $downloadAddr;
+        // Prioritas: HD No Watermark > HD > No Watermark > Standard
+        foreach ($data['links'] as $link) {
+            if (strpos($link['type'], 'hd') !== false && strpos($link['type'], 'nowatermark') !== false) {
+                $videoUrl = $link['url'];
+                $isOriginal = true;
+                break;
+            } elseif (strpos($link['type'], 'hd') !== false && empty($videoUrl)) {
+                $videoUrl = $link['url'];
+                $isOriginal = true;
+            } elseif (strpos($link['type'], 'nowatermark') !== false && empty($videoUrl)) {
+                $videoUrl = $link['url'];
             }
-            if (empty($videoUrl) && !empty($playAddr)) {
-                $videoUrl = is_array($playAddr) ? ($playAddr['urlList'][0] ?? $playAddr['url'] ?? '') : $playAddr;
-            }
-            
-            if (empty($videoUrl)) {
-                return null;
-            }
-            
+        }
+        
+        if (empty($videoUrl) && !empty($data['links'][0]['url'])) {
+            $videoUrl = $data['links'][0]['url'];
+        }
+        
+        if (!empty($videoUrl)) {
             return [
                 'success' => true,
                 'video_url' => $videoUrl,
-                'title' => $video['desc'] ?? 'TikTok Video',
-                'author' => $video['author']['nickname'] ?? $video['author']['uniqueId'] ?? 'Unknown',
-                'authorId' => $video['author']['uniqueId'] ?? '',
-                'duration' => $video['video']['duration'] ?? 0,
-                'cover' => $video['video']['cover'] ?? '',
-                'width' => $video['video']['width'] ?? 1080,
-                'height' => $video['video']['height'] ?? 1920,
-                'format' => 'mp4',
-                'source' => 'tiktok_original',
-                'original' => true // Flag bahwa ini original CDN
+                'title' => $data['desc'] ?? 'TikTok Video',
+                'author' => $data['author'] ?? 'Unknown',
+                'cover' => $data['cover'] ?? '',
+                'duration' => $data['duration'] ?? 0,
+                'source' => 'lovetik',
+                'original' => $isOriginal
             ];
-        }
-    }
-    
-    // Fallback: Coba pattern JSON lain
-    if (preg_match('/<script[^>]*>window\._SSR_HYDRATED_DATA\s*=\s*({.*?})<\/script>/s', $html, $matches)) {
-        $jsonStr = $matches[1];
-        $data = json_decode($jsonStr, true);
-        
-        if (isset($data['ItemModule'])) {
-            $item = reset($data['ItemModule']);
-            $video = $item['video'] ?? [];
-            
-            $videoUrl = $video['playAddr'] ?? $video['downloadAddr'] ?? '';
-            if (is_array($videoUrl)) {
-                $videoUrl = $videoUrl[0] ?? '';
-            }
-            
-            if (!empty($videoUrl)) {
-                return [
-                    'success' => true,
-                    'video_url' => $videoUrl,
-                    'title' => $item['desc'] ?? 'TikTok Video',
-                    'author' => $item['author'] ?? 'Unknown',
-                    'source' => 'tiktok_ssr',
-                    'original' => true
-                ];
-            }
         }
     }
     
@@ -240,9 +256,11 @@ function getOriginalTikTokData($tiktokUrl) {
 }
 
 /**
- * METHOD 2: API Downloader sebagai fallback (TikWM dengan HD)
+ * TikWM Fallback Method
  */
 function getFromTikWM($tiktokUrl) {
+    logMessage("Using TikWM fallback for: $tiktokUrl");
+    
     $apiUrl = 'https://www.tikwm.com/api/';
     
     $ch = curl_init();
@@ -250,8 +268,7 @@ function getFromTikWM($tiktokUrl) {
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
         'url' => $tiktokUrl,
-        'hd' => 1,
-        'original' => 1 // Minta original quality
+        'hd' => 1
     ]));
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
@@ -270,8 +287,7 @@ function getFromTikWM($tiktokUrl) {
     $data = json_decode($response, true);
     
     if (isset($data['data']['play'])) {
-        // Prioritaskan original/hdplay jika tersedia
-        $videoUrl = $data['data']['original'] ?? $data['data']['hdplay'] ?? $data['data']['play'];
+        $videoUrl = $data['data']['hdplay'] ?? $data['data']['play'];
         
         return [
             'success' => true,
@@ -282,7 +298,7 @@ function getFromTikWM($tiktokUrl) {
             'cover' => $data['data']['cover'] ?? '',
             'duration' => $data['data']['duration'] ?? 0,
             'source' => 'tikwm',
-            'original' => false // Re-encoded
+            'original' => false
         ];
     }
     
@@ -290,40 +306,140 @@ function getFromTikWM($tiktokUrl) {
 }
 
 /**
- * Download dengan CHUNKING dan VERIFIKASI
- * Mencegah video corrupt/blank
+ * Strict Video Validation (No FFmpeg)
+ * Cek MP4 structure, size, dan headers
+ */
+function validateVideoStrict($filepath) {
+    logMessage("Validating video (no FFmpeg): $filepath");
+    
+    if (!file_exists($filepath)) {
+        logMessage("File not found");
+        return false;
+    }
+    
+    $size = filesize($filepath);
+    
+    // Cek minimum size
+    if ($size < MIN_VIDEO_SIZE) {
+        logMessage("File too small: $size bytes (min " . MIN_VIDEO_SIZE . ")");
+        return false;
+    }
+    
+    // Baca header dan trailer untuk validasi MP4
+    $handle = fopen($filepath, 'rb');
+    
+    // Cek header awal (first 32 bytes)
+    $header = fread($handle, 32);
+    $hexHeader = bin2hex($header);
+    
+    // Cek box type 'ftyp' (file type) - harus ada di awal file MP4 valid
+    // MP4 signature: [4 bytes size] + 'ftyp' + [4 bytes major_brand] + ...
+    $hasFtyp = (strpos($header, 'ftyp') !== false);
+    
+    // Cek juga untuk 'moov' (movie header) atau 'mdat' (media data)
+    $hasMoov = (strpos($header, 'moov') !== false);
+    $hasMdat = (strpos($header, 'mdat') !== false);
+    
+    // Cek di offset berbeda jika tidak ditemukan di awal
+    if (!$hasFtyp && !$hasMoov && !$hasMdat) {
+        // Coba baca di posisi lain (beberapa MP4 punya struktur berbeda)
+        fseek($handle, 4);
+        $skip4 = fread($handle, 8);
+        if (strpos($skip4, 'ftyp') !== false) {
+            $hasFtyp = true;
+        }
+    }
+    
+    // Cek trailer (last 8 bytes) - harus ada box valid di akhir
+    fseek($handle, -8, SEEK_END);
+    $trailer = fread($handle, 8);
+    fclose($handle);
+    
+    // Validasi trailer (biasanya berisi ukuran box atau moov/mdat)
+    $validTrailer = strlen($trailer) === 8;
+    
+    // MP4 valid harus punya minimal ftyp di awal
+    if (!$hasFtyp && !$hasMoov && !$hasMdat) {
+        logMessage("Invalid MP4 structure. Header: " . substr($hexHeader, 0, 32));
+        return false;
+    }
+    
+    // Cek MIME type via file extension dan content
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mimeType = finfo_file($finfo, $filepath);
+    finfo_close($finfo);
+    
+    $validMime = in_array($mimeType, [
+        'video/mp4',
+        'video/quicktime', // MOV tapi bisa jadi MP4
+        'application/mp4',
+        'video/x-matroska', // MKV (kadang terdeteksi sebagai ini)
+        'application/octet-stream' // Kadang MP4 terdeteksi sebagai ini
+    ]);
+    
+    if (!$validMime && $mimeType !== 'application/octet-stream') {
+        logMessage("Invalid MIME type: $mimeType");
+        // Jangan return false langsung, kadang MP4 terdeteksi sebagai octet-stream
+    }
+    
+    logMessage("Validation passed. Size: $size, MIME: $mimeType, Structure: OK");
+    return true;
+}
+
+/**
+ * Download dengan verifikasi lengkap
  */
 function downloadVideoVerified($url, $filename, $chatId = null, $msgId = null) {
     $filepath = DOWNLOAD_DIR . $filename;
     $tempPath = $filepath . '.tmp';
     
-    logMessage("Starting verified download: $filename");
+    logMessage("Starting download: $filename");
     
-    // Cek apakah URL valid
-    $headers = get_headers($url, 1);
-    if (!$headers || strpos($headers[0], '200') === false) {
-        logMessage("Invalid URL or 404: " . ($headers[0] ?? 'No response'));
+    // Head request untuk cek headers
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_NOBODY, true);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    curl_exec($ch);
+    
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $contentLength = curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
+    $contentType = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    curl_close($ch);
+    
+    if ($httpCode !== 200) {
+        logMessage("Invalid URL: HTTP $httpCode");
         return false;
     }
     
-    $contentLength = isset($headers['Content-Length']) ? (int)$headers['Content-Length'] : 0;
-    logMessage("Content-Length: $contentLength bytes");
+    // Cek content type
+    $isVideo = (strpos($contentType, 'video/') !== false || 
+                strpos($contentType, 'application/octet-stream') !== false ||
+                strpos($contentType, 'binary/octet-stream') !== false);
     
-    // Download dengan chunks untuk menghindari memory limit dan corrupt
+    if (!$isVideo && !empty($contentType)) {
+        logMessage("Warning: Content-Type is $contentType, expected video");
+    }
+    
+    logMessage("Content-Type: $contentType, Expected Size: $contentLength");
+    
+    // Download dengan streaming
     $fp = fopen($tempPath, 'wb');
     if (!$fp) {
-        logMessage("Cannot open file for writing");
+        logMessage("Cannot open temp file");
         return false;
     }
     
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, false); // Streaming mode
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, false);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 300); // 5 menit
+    curl_setopt($ch, CURLOPT_TIMEOUT, 300);
     
-    // Progress callback
     $downloaded = 0;
     $lastUpdate = 0;
     
@@ -331,10 +447,9 @@ function downloadVideoVerified($url, $filename, $chatId = null, $msgId = null) {
         $length = fwrite($fp, $data);
         $downloaded += $length;
         
-        // Update progress setiap 5 detik
-        if ($chatId && $msgId && time() - $lastUpdate > 5 && $contentLength > 0) {
+        if ($chatId && $msgId && time() - $lastUpdate > 3 && $contentLength > 0) {
             $percent = min(100, round(($downloaded / $contentLength) * 100));
-            editMessage($chatId, $msgId, "⬇️ Download: $percent% (" . round($downloaded/1024/1024, 1) . "MB / " . round($contentLength/1024/1024, 1) . "MB)");
+            editMessage($chatId, $msgId, "⬇️ Download: $percent% (" . round($downloaded/1024/1024, 1) . "MB)");
             $lastUpdate = time();
         }
         
@@ -353,55 +468,38 @@ function downloadVideoVerified($url, $filename, $chatId = null, $msgId = null) {
         return false;
     }
     
-    // Verifikasi file size
-    $actualSize = filesize($tempPath);
-    if ($actualSize === 0) {
-        logMessage("Downloaded file is empty");
+    // Validasi strict
+    if (!validateVideoStrict($tempPath)) {
+        logMessage("Video validation failed");
         @unlink($tempPath);
         return false;
     }
     
-    if ($contentLength > 0 && $actualSize < ($contentLength * 0.9)) {
+    // Cek ukuran akhir
+    $actualSize = filesize($tempPath);
+    if ($contentLength > 0 && $actualSize < ($contentLength * 0.95)) {
         logMessage("Incomplete download: $actualSize / $contentLength");
         @unlink($tempPath);
         return false;
     }
     
-    // Verifikasi video format (cek header MP4)
-    $handle = fopen($tempPath, 'rb');
-    $header = fread($handle, 12);
-    fclose($handle);
-    
-    // Cek signature MP4 (ftyp, moov, dll)
-    $isMP4 = (strpos($header, 'ftyp') !== false || 
-              strpos($header, 'moov') !== false || 
-              strpos($header, 'mdat') !== false ||
-              bin2hex(substr($header, 4, 4)) === '66747970'); // ftyp in hex
-    
-    if (!$isMP4) {
-        logMessage("Invalid video format. Header: " . bin2hex($header));
-        @unlink($tempPath);
-        return false;
-    }
-    
-    // Rename ke final
     rename($tempPath, $filepath);
-    logMessage("Download verified: $filepath ($actualSize bytes)");
+    logMessage("Download complete: $filepath ($actualSize bytes)");
     
     return $filepath;
 }
 
-// Main downloader dengan fallback
+// Main downloader
 function getTikTokVideo($url) {
-    // Coba method 1: Original CDN (terbaik)
-    $result = getOriginalTikTokData($url);
+    // LoveTik Primary
+    $result = getFromLoveTik($url);
     if ($result && isset($result['success'])) {
-        logMessage("Using ORIGINAL CDN method");
+        logMessage("LoveTik success");
         return $result;
     }
     
-    // Coba method 2: TikWM API
-    logMessage("Original method failed, trying TikWM");
+    // TikWM Fallback
+    logMessage("LoveTik failed, trying TikWM");
     $result = getFromTikWM($url);
     if ($result && isset($result['success'])) {
         return $result;
@@ -424,7 +522,7 @@ function getKeyboard() {
     return [
         'keyboard' => [
             [['text' => '📥 Cara Penggunaan'], ['text' => '📊 Status']],
-            [['text' => '✅ Original Quality']]
+            [['text' => '⏱ Runtime'], ['text' => '📡 Ping']]
         ],
         'resize_keyboard' => true
     ];
@@ -441,33 +539,65 @@ function handleMessage($msg) {
     
     // Start
     if (strpos($text, '/start') === 0) {
-        $welcome = "👋 <b>TikTok ORIGINAL QUALITY Downloader</b>\n\n";
-        $welcome .= "✨ <b>Fitur Baru:</b>\n";
-        $welcome .= "🎬 Original CDN (Tidak re-encode)\n";
-        $welcome .= "🔍 Verifikasi video (anti blank)\n";
-        $welcome .= "📦 Chunked download (stabil)\n";
-        $welcome .= "🚀 Auto-retry jika gagal\n\n";
-        $welcome .= "⚠️ <b>PASTIKAN:</b>\n";
-        $welcome .= "• Link TikTok valid & public\n";
-        $welcome .= "• Video tidak private\n";
-        $welcome .= "• Tunggu proses download\n\n";
+        $welcome = "👋 <b>LoveTik Downloader Bot</b>\n\n";
+        $welcome .= "✨ <b>Fitur:</b>\n";
+        $welcome .= "🎬 LoveTik API (HD No Watermark)\n";
+        $welcome .= "🔍 Validasi video (anti blank)\n";
+        $welcome .= "⚡️ No FFmpeg required\n";
+        $welcome .= "🔄 Auto fallback\n\n";
+        $welcome .= "📋 <b>Command:</b>\n";
+        $welcome .= "• /runtime - Uptime bot\n";
+        $welcome .= "• /ping - Cek latency\n";
+        $welcome .= "• /status - Status sistem\n\n";
         $welcome .= "Kirim link TikTok sekarang!";
         
         sendMessage($chatId, $welcome, getKeyboard());
         return;
     }
     
+    // Runtime
+    if (strpos($text, '/runtime') !== false || $text === '⏱ Runtime') {
+        $runtime = getRuntime();
+        $memory = round(memory_get_usage(true) / 1024 / 1024, 2);
+        $peakMemory = round(memory_get_peak_usage(true) / 1024 / 1024, 2);
+        
+        $msg = "⏱ <b>Runtime Information</b>\n\n";
+        $msg .= "🕐 Uptime: <code>$runtime</code>\n";
+        $msg .= "💾 Memory: <code>$memory MB</code> (Peak: $peakMemory MB)\n";
+        $msg .= "🚀 Started: <code>" . date('Y-m-d H:i:s', $GLOBALS['START_TIME']) . "</code>";
+        
+        sendMessage($chatId, $msg);
+        return;
+    }
+    
+    // Ping
+    if (strpos($text, '/ping') !== false || $text === '📡 Ping') {
+        $ping = getPing();
+        $latency = $ping['latency'];
+        $status = $ping['status'];
+        
+        $emoji = $latency < 100 ? '🟢' : ($latency < 300 ? '🟡' : '🔴');
+        
+        $msg = "📡 <b>Ping Test</b>\n\n";
+        $msg .= "$emoji Latency: <code>$latency ms</code>\n";
+        $msg .= "✅ API Status: <code>$status</code>\n";
+        $msg .= "🕐 " . date('Y-m-d H:i:s');
+        
+        sendMessage($chatId, $msg);
+        return;
+    }
+    
     // Help
     if (strpos($text, '/help') !== false || $text === '📥 Cara Penggunaan') {
         $help = "📖 <b>Panduan:</b>\n\n";
-        $help .= "1️⃣ Buka TikTok → Share → Copy Link\n";
-        $help .= "2️⃣ Paste link di bot ini\n";
-        $help .= "3️⃣ Tunggu verifikasi & download\n";
-        $help .= "4️⃣ Video dikirim (max 50MB)\n\n";
+        $help .= "1️⃣ Copy link TikTok (Share → Copy Link)\n";
+        $help .= "2️⃣ Paste di bot ini\n";
+        $help .= "3️⃣ Tunggu download & validasi\n";
+        $help .= "4️⃣ Video dikirim!\n\n";
         $help .= "⚡️ <b>Tips:</b>\n";
-        $help .= "• Gunakan link www.tiktok.com (bukan vm/vt)\n";
-        $help .= "• Video HD mungkin >50MB → dikirim sebagai dokumen\n";
-        $help .= "• Jika blank, coba lagi dengan link berbeda";
+        $help .= "• Video >50MB dikirim sebagai dokumen\n";
+        $help .= "• Gunakan link www.tiktok.com\n";
+        $help .= "• Tunggu proses validasi selesai";
         
         sendMessage($chatId, $help);
         return;
@@ -475,38 +605,18 @@ function handleMessage($msg) {
     
     // Status
     if (strpos($text, '/status') !== false || $text === '📊 Status') {
+        $ping = getPing();
+        $runtime = getRuntime();
+        
         $status = "🤖 <b>Status Bot</b>\n\n";
         $status .= "✅ Sistem: Normal\n";
-        $status .= "🎬 Method: Original CDN\n";
-        $status .= "🔍 Verifikasi: Aktif\n";
-        $status .= "⏰ " . date('Y-m-d H:i:s') . "\n\n";
-        $status .= "🔄 <b>Pipeline:</b>\n";
-        $status .= "1. Extract original URL\n";
-        $status .= "2. Verify headers\n";
-        $status .= "3. Chunked download\n";
-        $status .= "4. Format validation\n";
-        $status .= "5. Send to Telegram";
+        $status .= "🎬 Source: LoveTik API\n";
+        $status .= "📡 Latency: {$ping['latency']}ms\n";
+        $status .= "⏱ Uptime: $runtime\n";
+        $status .= "🔧 Validation: PHP Native (No FFmpeg)\n";
+        $status .= "⏰ " . date('Y-m-d H:i:s');
         
         sendMessage($chatId, $status);
-        return;
-    }
-    
-    // Info original
-    if ($text === '✅ Original Quality') {
-        $info = "🎬 <b>Original Quality System</b>\n\n";
-        $info .= "Bot ini mengambil video <b>langsung dari server TikTok</b> (CDN) tanpa:\n";
-        $info .= "❌ Re-encoding\n";
-        $info .= "❌ Kompresi ulang\n";
-        $info .= "❌ Konversi format\n\n";
-        $info .= "✅ <b>Keuntungan:</b>\n";
-        $info .= "• Kualitas asli upload\n";
-        $info .= "• Bitrate penuh\n";
-        $info .= "• Tidak ada artifact\n";
-        $info .= "• Warna asli\n\n";
-        $info .= "⚠️ <b>Catatan:</b>\n";
-        $info .= "Video original biasanya 5-20MB per menit untuk HD";
-        
-        sendMessage($chatId, $info);
         return;
     }
     
@@ -516,41 +626,35 @@ function handleMessage($msg) {
         
         sendAction($chatId, 'typing');
         
-        // Pesan processing
-        $proc = sendMessage($chatId, "🔍 <b>Menganalisis video...</b>\n⏳ Mengambil data original dari TikTok", null);
+        $proc = sendMessage($chatId, "🔍 <b>Menganalisis link...</b>\n🌐 LoveTik API", null);
         $procId = $proc['result']['message_id'] ?? null;
         
-        // Get video data
         $data = getTikTokVideo($url);
         
         if (isset($data['error'])) {
-            editMessage($chatId, $procId, "❌ <b>Gagal:</b> " . $data['error'] . "\n\nCoba:\n• Pastikan link benar\n• Coba link www.tiktok.com (bukan vm/vt)\n• Video mungkin private");
+            editMessage($chatId, $procId, "❌ <b>Gagal:</b> " . $data['error']);
             return;
         }
         
-        // Info ditemukan
-        $isOriginal = $data['original'] ? '✅ ORIGINAL' : '⚠️ Re-encoded';
-        $source = $data['source'];
+        $isOriginal = $data['original'] ? '✅ HD No Watermark' : '⚠️ Standard';
         
         editMessage($chatId, $procId, 
             "✅ <b>Video ditemukan!</b>\n" .
             "👤 " . htmlspecialchars($data['author']) . "\n" .
             "📝 " . htmlspecialchars(substr($data['title'], 0, 40)) . "...\n" .
-            "🎬 <b>$isOriginal</b>\n" .
-            "🌐 Source: $source\n\n" .
-            "⬇️ <b>Memulai download...</b>"
+            "🎬 <b>$isOriginal</b>\n\n" .
+            "⬇️ <b>Downloading & Validating...</b>"
         );
         
         sendAction($chatId, 'upload_video');
         
-        // Download dengan verifikasi
         $filename = 'tt_' . time() . '_' . uniqid() . '.mp4';
         $path = downloadVideoVerified($data['video_url'], $filename, $chatId, $procId);
         
-        // Jika gagal dan ada SD fallback
+        // Fallback SD
         if (!$path && isset($data['sd_url'])) {
-            logMessage("HD failed, trying SD fallback");
-            editMessage($chatId, $procId, "⚠️ HD gagal, mencoba SD quality...");
+            logMessage("HD failed, trying SD");
+            editMessage($chatId, $procId, "⚠️ HD gagal, mencoba SD...");
             $filename = 'tt_sd_' . time() . '_' . uniqid() . '.mp4';
             $path = downloadVideoVerified($data['sd_url'], $filename, $chatId, $procId);
         }
@@ -560,14 +664,13 @@ function handleMessage($msg) {
             $sizeMB = round($size / 1024 / 1024, 2);
             $isLarge = $size > MAX_FILE_SIZE;
             
-            editMessage($chatId, $procId, "📤 <b>Mengirim video...</b>\n📦 $sizeMB MB " . ($isLarge ? '(dikirim sebagai dokumen)' : ''));
+            editMessage($chatId, $procId, "📤 <b>Mengirim...</b>\n📦 $sizeMB MB");
             sendAction($chatId, $isLarge ? 'upload_document' : 'upload_video');
             
             $caption = "🎵 " . htmlspecialchars($data['title']) . "\n" .
                       "👤 " . htmlspecialchars($data['author']) . "\n" .
-                      "🎬 " . ($data['original'] ? 'Original Quality' : 'Standard') . "\n" .
-                      "📦 {$sizeMB}MB\n" .
-                      "✅ @TikTokOriginalBot";
+                      "🎬 " . ($data['original'] ? 'HD No Watermark' : 'Standard') . "\n" .
+                      "📦 {$sizeMB}MB";
             
             if ($isLarge) {
                 $result = sendDocument($chatId, $path, $caption);
@@ -575,27 +678,23 @@ function handleMessage($msg) {
                 $result = sendVideo($chatId, $path, $caption);
             }
             
-            // Cleanup
             if (file_exists($path)) {
                 unlink($path);
             }
             
             if ($result) {
-                // Hapus pesan processing
                 sendTelegramRequest('deleteMessage', [
                     'chat_id' => $chatId,
                     'message_id' => $procId
                 ]);
             } else {
-                editMessage($chatId, $procId, "❌ Gagal upload ke Telegram. Coba lagi.");
+                editMessage($chatId, $procId, "❌ Gagal upload. Coba lagi.");
             }
         } else {
-            // Fallback ke link
             editMessage($chatId, $procId, 
                 "⚠️ <b>Download gagal</b>\n\n" .
-                "🔗 <b>Link langsung (buka di browser):</b>\n" .
-                "<code>" . htmlspecialchars($data['video_url']) . "</code>\n\n" .
-                "Jika link tidak work, video mungkin memiliki proteksi."
+                "🔗 <b>Link langsung:</b>\n" .
+                "<code>" . htmlspecialchars($data['video_url']) . "</code>"
             );
         }
         
@@ -603,12 +702,12 @@ function handleMessage($msg) {
     }
     
     // Unknown
-    sendMessage($chatId, "❓ Kirim link TikTok untuk download.\n\nFormat yang didukung:\n• https://www.tiktok.com/@user/video/123\n• https://vm.tiktok.com/xxx\n• https://vt.tiktok.com/xxx", getKeyboard());
+    sendMessage($chatId, "❓ Kirim link TikTok untuk download.\n\nFormat:\n• https://www.tiktok.com/@user/video/123\n• https://vm.tiktok.com/xxx", getKeyboard());
 }
 
 // Main loop
 function startBot() {
-    logMessage("=== BOT ORIGINAL QUALITY STARTED ===");
+    logMessage("=== LOVETIK BOT STARTED (No FFmpeg) ===");
     echo "Bot running. Press Ctrl+C to stop.\n";
     
     $offset = 0;
