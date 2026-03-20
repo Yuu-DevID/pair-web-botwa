@@ -9,7 +9,7 @@
  */
 
 // Konfigurasi
-define('BOT_TOKEN', '8391191201:AAEVWguoQ5T8_qDZnZmCMD8uS7xpaAOvaLM'); // Ganti dengan token dari @BotFather
+define('BOT_TOKEN', '8391191201:AAFKUW9n23EYzIH9O-9JCvJc1jO5t3n2a28'); // Ganti dengan token dari @BotFather
 define('API_URL', 'https://apps.animekita.org/api/v1.1.9//anime-list.php');
 define('BASE_URL', 'https://api.telegram.org/bot' . BOT_TOKEN . '/');
 
